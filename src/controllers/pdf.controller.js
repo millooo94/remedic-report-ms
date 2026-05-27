@@ -1,0 +1,12 @@
+import { generatePdfPrintPage } from "../services/pdf.service.js";
+
+export async function generatePdfController(req, res) {
+  try {
+    const htmlPage = await generatePdfPrintPage(req.body);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(htmlPage);
+  } catch (err) {
+    console.error("PDF error:", err);
+    res.status(500).send("PDF generation failed");
+  }
+}

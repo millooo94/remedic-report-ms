@@ -1,0 +1,19 @@
+{
+  "name": "rmdc-report-ms",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "description": "",
+  "dependencies": {
+    "express": "^5.2.1",
+    "googleapis": "^171.4.0",
+    "open": "^11.0.0",
+    "puppeteer": "^24.37.5"
+  }
+}
