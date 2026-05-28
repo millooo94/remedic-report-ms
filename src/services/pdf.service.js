@@ -1,4 +1,5 @@
 import { env, getDriveConfigStatus, getMissingDriveEnv } from "../config/env.js";
+import { PDFDocument } from "pdf-lib";
 import { REPORT_LOGO_BASE64 } from "../constants/report-logo.js";
 import { buildPageFooterTemplate } from "../templates/build-page-footer.template.js";
 import { buildPageHeaderTemplate } from "../templates/build-page-header.template.js";
@@ -17,6 +18,7 @@ export async function generatePdfPrintPage(payload) {
     data_nascita,
     titolo_visita,
     data_visita,
+    attachments,
   } = payload;
 
   specializzazione = normalizeName(specializzazione);
@@ -47,6 +49,8 @@ export async function generatePdfPrintPage(payload) {
         right: "0mm",
       },
     });
+
+    const finalPdf = await mergePdfAttachments(pdf, attachments?.pdfs ?? []);
 
     const dataNascitaITA = formatItalianDate(data_nascita);
     const dataVisitaITA = formatItalianDate(data_visita);
@@ -85,7 +89,7 @@ export async function generatePdfPrintPage(payload) {
           medicoFolder,
         );
 
-        await uploadOrReplaceFile(fileName, pazienteFolder, pdf);
+        await uploadOrReplaceFile(fileName, pazienteFolder, finalPdf);
       } catch (driveError) {
         console.error("Drive upload failed but PDF generation continued:", {
           fileName,
@@ -106,11 +110,62 @@ export async function generatePdfPrintPage(payload) {
       }
     }
 
-    const base64Pdf = Buffer.from(pdf).toString("base64");
+    const base64Pdf = Buffer.from(finalPdf).toString("base64");
     return buildPrintPage(fileName, base64Pdf);
   } finally {
     if (page) {
       releasePage(page);
     }
   }
+}
+
+async function mergePdfAttachments(mainPdfBuffer, pdfAttachments) {
+  if (!Array.isArray(pdfAttachments) || pdfAttachments.length === 0) {
+    return mainPdfBuffer;
+  }
+
+  const mergedDocument = await PDFDocument.load(mainPdfBuffer);
+
+  for (const attachment of pdfAttachments) {
+    if (attachment?.mimeType !== "application/pdf") {
+      continue;
+    }
+
+    let attachmentBuffer;
+
+    try {
+      attachmentBuffer = Buffer.from(attachment.base64, "base64");
+    } catch {
+      throw createPdfAttachmentError(
+        attachment?.fileName,
+        "Base64 PDF attachment is not valid.",
+      );
+    }
+
+    try {
+      const attachmentDocument = await PDFDocument.load(attachmentBuffer);
+      const pages = await mergedDocument.copyPages(
+        attachmentDocument,
+        attachmentDocument.getPageIndices(),
+      );
+
+      pages.forEach((page) => mergedDocument.addPage(page));
+    } catch {
+      throw createPdfAttachmentError(
+        attachment?.fileName,
+        "Unable to read attached PDF. The file may be corrupted.",
+      );
+    }
+  }
+
+  const mergedPdfBytes = await mergedDocument.save();
+  return Buffer.from(mergedPdfBytes);
+}
+
+function createPdfAttachmentError(fileName, message) {
+  const err = new Error(
+    fileName ? `${message} Problematic file: ${fileName}.` : message,
+  );
+  err.statusCode = 400;
+  return err;
 }

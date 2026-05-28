@@ -7,6 +7,8 @@ export async function generatePdfController(req, res) {
     res.send(htmlPage);
   } catch (err) {
     console.error("PDF error:", err);
-    res.status(500).send("PDF generation failed");
+    res.status(err?.statusCode || 500).send(
+      err?.message || "PDF generation failed",
+    );
   }
 }
