@@ -49,6 +49,21 @@ cp .env.example .env
 
 Poi inserisci i valori reali richiesti dal server. Non committare mai il file `.env`.
 
+Per abilitare il salvataggio bozze con SQLite:
+
+```bash
+sudo mkdir -p /var/lib/remedic-report
+sudo chown -R camillo:camillo /var/lib/remedic-report
+```
+
+Nel file `.env` imposta:
+
+```bash
+DRAFTS_DB_PATH=/var/lib/remedic-report/drafts.sqlite
+```
+
+Nota: il file SQLite contiene dati sanitari. Deve stare fuori dal repository, con permessi stretti e backup protetti.
+
 ## Avvio locale sul server
 
 ```bash
@@ -139,4 +154,7 @@ git pull
 npm ci
 sudo systemctl restart remedic-report-ms
 sudo systemctl status remedic-report-ms
+journalctl -u remedic-report-ms -f
 ```
+
+Se aggiungi o aggiorni dipendenze native come `better-sqlite3`, assicurati di eseguire `npm ci` o `npm install` anche sul server prima del riavvio del servizio.

@@ -19,6 +19,9 @@ const configuredCorsOrigins = parseOrigins(process.env.CORS_ORIGIN);
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4010),
+  draftsDbPath:
+    process.env.DRAFTS_DB_PATH?.trim() ||
+    path.resolve(process.cwd(), "data", "drafts.sqlite"),
   rootFolder: process.env.ROOT_FOLDER?.trim() || "",
   pdfApiKey: process.env.PDF_API_KEY || "",
   googleClientId: process.env.GOOGLE_CLIENT_ID || "",

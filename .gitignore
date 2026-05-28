@@ -13,6 +13,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 
 .cache/
 .parcel-cache/
