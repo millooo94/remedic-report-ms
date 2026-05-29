@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "neurologist:upsert": "node scripts/upsert-neurologist-user.js",
+    "user:upsert": "node scripts/upsert-user.js"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +16,7 @@
     "better-sqlite3": "^12.10.0",
     "express": "^5.2.1",
     "googleapis": "^171.4.0",
+    "nodemailer": "^7.0.3",
     "open": "^11.0.0",
     "pdf-lib": "^1.17.1",
     "puppeteer": "^24.37.5"

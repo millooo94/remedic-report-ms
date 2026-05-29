@@ -1,10 +1,10 @@
-const ALLOWED_REPORT_TYPES = new Set(["standard", "emg", "psg"]);
-const ALLOWED_DRAFT_STATUSES = new Set([
-  "bozza",
-  "anamnesi_raccolta",
-  "in_refertazione",
-  "completato",
-]);
+import {
+  ALLOWED_DRAFT_STATUSES as DRAFT_STATUSES,
+  ALLOWED_REPORT_TYPES as REPORT_TYPES,
+} from "../constants/drafts.js";
+
+const ALLOWED_REPORT_TYPES = new Set(REPORT_TYPES);
+const ALLOWED_DRAFT_STATUSES = new Set(DRAFT_STATUSES);
 const MAX_FORM_DATA_BYTES = 1024 * 1024;
 
 function isPlainObject(value) {

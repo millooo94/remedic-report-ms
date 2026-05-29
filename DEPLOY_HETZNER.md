@@ -21,15 +21,12 @@ sudo apt update
 sudo apt install -y nginx certbot python3-certbot-nginx chromium
 ```
 
-Per Node 20 usa il metodo che preferisci per il server, per esempio `nvm`, `fnm` oppure i pacchetti ufficiali NodeSource.
-
 ## Deploy applicazione
 
 ```bash
 cd /var/www
 git clone <URL_REPO_BACKEND> remedic-report-ms
 cd /var/www/remedic-report-ms
-git pull
 npm ci
 ```
 
@@ -37,32 +34,110 @@ Se in futuro il repository non includesse piu `package-lock.json`, usa `npm inst
 
 ## Configurazione `.env`
 
-Crea manualmente il file:
-
-`/var/www/remedic-report-ms/.env`
-
-Puoi partire da:
-
 ```bash
 cp .env.example .env
 ```
 
-Poi inserisci i valori reali richiesti dal server. Non committare mai il file `.env`.
+Nel file `.env` imposta almeno:
 
-Per abilitare il salvataggio bozze con SQLite:
+```bash
+PORT=4010
+NODE_ENV=production
+FRONTEND_URL=https://report.remedic.it
+APP_PUBLIC_URL=https://report.remedic.it
+CORS_ORIGIN=https://report.remedic.it
+PDF_API_KEY=change-me
+
+AUTH_SESSION_COOKIE_NAME=remedic_session
+AUTH_CSRF_COOKIE_NAME=remedic_csrf
+AUTH_COOKIE_SAMESITE=none
+AUTH_COOKIE_SECURE=true
+SESSION_TTL_HOURS=8
+
+DRAFTS_DB_PATH=/var/lib/remedic-report/drafts.sqlite
+DRAFTS_UPLOAD_DIR=/var/lib/remedic-report/uploads
+
+ROOT_FOLDER=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+DRIVE_DEBUG=false
+
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=
+SIGNED_PDF_NOTIFICATION_EMAIL=humancaretelemedicine@gmail.com
+```
+
+## Directory persistenti
 
 ```bash
 sudo mkdir -p /var/lib/remedic-report
+sudo mkdir -p /var/lib/remedic-report/uploads
 sudo chown -R camillo:camillo /var/lib/remedic-report
 ```
 
-Nel file `.env` imposta:
+Nota: sia il file SQLite sia la directory uploads contengono dati sanitari e devono stare fuori dal repository, con permessi stretti e backup protetti.
+
+## Sessioni HttpOnly e CORS
+
+Il frontend e il backend lavorano in cross-site, quindi in produzione conviene usare:
+
+- `AUTH_COOKIE_SAMESITE=none`
+- `AUTH_COOKIE_SECURE=true`
+
+In sviluppo locale puoi usare:
+
+- `AUTH_COOKIE_SAMESITE=lax`
+- `AUTH_COOKIE_SECURE=false`
+
+La UI usa cookie di sessione HttpOnly e token CSRF separato. Non usare piu token di login in `sessionStorage` come meccanismo principale.
+
+## PDF standard vs preview vs firmato
+
+Il backend distingue ora tre casi:
+
+- `POST /pdf`
+  genera il PDF e usa il normale upload su Google Drive. Questo flusso resta quello del referto standard.
+- `POST /pdf/preview`
+  genera un PDF temporaneo senza salvarlo su Google Drive. Questo flusso va usato per EMG e PSG quando il documento deve essere controllato o firmato esternamente.
+- `POST /drafts/:id/signed-pdf`
+  oppure `POST /refertatore/drafts/:id/signed-pdf`
+  riceve un PDF gia firmato, lo salva negli uploads persistenti e poi lo archivia su Google Drive come documento definitivo del refertatore assegnato.
+
+Per EMG e PSG, quindi, il documento definitivo su Drive nasce solo dal caricamento del PDF gia firmato, non dall'export temporaneo.
+
+## Creazione utenti da server
+
+### Admin
 
 ```bash
-DRAFTS_DB_PATH=/var/lib/remedic-report/drafts.sqlite
+cd /var/www/remedic-report-ms
+npm run user:upsert -- --role admin --email admin@remedic.it --password "ChangeMe!2026" --name "Admin Remedic"
 ```
 
-Nota: il file SQLite contiene dati sanitari. Deve stare fuori dal repository, con permessi stretti e backup protetti.
+### Refertatore EMG
+
+```bash
+npm run user:upsert -- --role refertatore --email sebastianoarenaneurologo@gmail.com --password "Rmdc-Neuro!2026-Arena" --name "Dott. Sebastiano Arena" --specializzazione "Neurologia" --assigned emg
+```
+
+### Refertatore PSG
+
+```bash
+npm run user:upsert -- --role refertatore --email refertatore.psg@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore PSG" --specializzazione "Pneumologia" --assigned psg
+```
+
+### Refertatore EMG + PSG
+
+```bash
+npm run user:upsert -- --role refertatore --email refertatore.misto@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore Misto" --specializzazione "Neurologia" --assigned emg,psg
+```
+
+La password mostrata sopra e solo temporanea: non viene salvata in chiaro nel DB e puo essere cambiata rilanciando lo stesso comando con una nuova password.
 
 ## Avvio locale sul server
 
@@ -145,6 +220,20 @@ Dopo che il DNS punta al server:
 ```bash
 sudo certbot --nginx -d report-api.remedic.it
 ```
+
+## Backup
+
+Includi nei backup:
+
+- `DRAFTS_DB_PATH`
+- `DRAFTS_UPLOAD_DIR`
+
+Per EMG e PSG gli uploads contengono:
+
+- tracciati EMG
+- firma TNFP
+- report strumentale PSG persistito
+- PDF firmati caricati
 
 ## Aggiornamenti successivi
 

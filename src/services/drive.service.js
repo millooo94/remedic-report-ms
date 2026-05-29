@@ -129,9 +129,10 @@ export async function uploadOrReplaceFile(fileName, parentFolder, pdfBuffer) {
       fileId: mainFile,
     });
 
-    await retry(() =>
+    const updated = await retry(() =>
       drive.files.update({
         fileId: mainFile,
+        fields: "id,name,webViewLink,webContentLink,parents",
         media: {
           mimeType: "application/pdf",
           body: pdfStream,
@@ -158,6 +159,13 @@ export async function uploadOrReplaceFile(fileName, parentFolder, pdfBuffer) {
         );
       }
     }
+    return {
+      fileId: updated.data.id || mainFile,
+      fileName: updated.data.name || fileName,
+      webViewLink: updated.data.webViewLink || null,
+      webContentLink: updated.data.webContentLink || null,
+      parentFolder,
+    };
   } else {
     const pdfStream = bufferToStream(pdfBuffer);
     logDriveDebug("uploadOrReplaceFile:create", {
@@ -165,12 +173,13 @@ export async function uploadOrReplaceFile(fileName, parentFolder, pdfBuffer) {
       parentFolder,
     });
 
-    await retry(() =>
+    const created = await retry(() =>
       drive.files.create({
         requestBody: {
           name: fileName,
           parents: [parentFolder],
         },
+        fields: "id,name,webViewLink,webContentLink,parents",
         media: {
           mimeType: "application/pdf",
           body: pdfStream,
@@ -181,6 +190,13 @@ export async function uploadOrReplaceFile(fileName, parentFolder, pdfBuffer) {
       fileName,
       parentFolder,
     });
+    return {
+      fileId: created.data.id || null,
+      fileName: created.data.name || fileName,
+      webViewLink: created.data.webViewLink || null,
+      webContentLink: created.data.webContentLink || null,
+      parentFolder,
+    };
   }
 }
 
