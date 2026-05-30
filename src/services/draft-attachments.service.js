@@ -272,6 +272,25 @@ export function getDraftAttachmentContent(draftId, attachmentId) {
   };
 }
 
+export function getSignedDraftAttachmentForDraft(draftId) {
+  const attachments = listDraftAttachments(draftId);
+  return (
+    attachments.find((attachment) => attachment.kind === EMG_ATTACHMENT_KINDS.SIGNED_PDF) ||
+    attachments.find((attachment) => attachment.kind === PSG_ATTACHMENT_KINDS.SIGNED_PDF) ||
+    null
+  );
+}
+
+export function getSignedDraftAttachmentContentForDraft(draftId) {
+  const attachment = getSignedDraftAttachmentForDraft(draftId);
+
+  if (!attachment) {
+    throw createHttpError(404, "PDF firmato non disponibile per questo referto.");
+  }
+
+  return getDraftAttachmentContent(draftId, attachment.id);
+}
+
 export function deleteDraftAttachment(draftId, attachmentId) {
   const metadata = getAttachmentMetadataById(draftId, attachmentId);
 

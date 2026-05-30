@@ -214,6 +214,28 @@ const AUDIT_LOGS_INDEXES_SQL = [
   "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);",
 ];
 
+const DRAFT_EMAIL_DELIVERIES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS draft_email_deliveries (
+    id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL,
+    sent_by_user_id TEXT NOT NULL,
+    recipient_email_masked TEXT NOT NULL,
+    recipient_email_hash TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('sent', 'failed')),
+    error_message TEXT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (draft_id) REFERENCES report_drafts(id) ON DELETE CASCADE,
+    FOREIGN KEY (sent_by_user_id) REFERENCES users(id) ON DELETE RESTRICT
+  );
+`;
+
+const DRAFT_EMAIL_DELIVERIES_INDEXES_SQL = [
+  "CREATE INDEX IF NOT EXISTS idx_draft_email_deliveries_draft_id ON draft_email_deliveries (draft_id, created_at DESC);",
+  "CREATE INDEX IF NOT EXISTS idx_draft_email_deliveries_user_id ON draft_email_deliveries (sent_by_user_id);",
+  "CREATE INDEX IF NOT EXISTS idx_draft_email_deliveries_status ON draft_email_deliveries (status);",
+];
+
 export function initDraftsStore() {
   getDb();
 }
@@ -241,6 +263,7 @@ export function getDb() {
   db.exec(PASSWORD_RESET_TOKENS_TABLE_SQL);
   db.exec(PROFESSIONALS_TABLE_SQL);
   db.exec(AUDIT_LOGS_TABLE_SQL);
+  db.exec(DRAFT_EMAIL_DELIVERIES_TABLE_SQL);
   ensureAuthSessionsSchema(db);
   ensureProfessionalsSchema(db);
 
@@ -277,6 +300,10 @@ export function getDb() {
   }
 
   for (const sql of AUDIT_LOGS_INDEXES_SQL) {
+    db.exec(sql);
+  }
+
+  for (const sql of DRAFT_EMAIL_DELIVERIES_INDEXES_SQL) {
     db.exec(sql);
   }
 

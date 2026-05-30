@@ -88,6 +88,34 @@ export async function sendSignedPdfNotificationEmail({
   return { sent: true };
 }
 
+export async function sendSignedReportToPatient({
+  to,
+  subject,
+  body,
+  attachmentPath,
+  attachmentFileName,
+}) {
+  if (!(await canSendEmail())) {
+    return { sent: false, reason: "smtp_not_configured" };
+  }
+
+  await transporter.sendMail({
+    from: env.smtpFrom,
+    to,
+    subject,
+    text: body,
+    attachments: [
+      {
+        filename: attachmentFileName,
+        path: attachmentPath,
+        contentType: "application/pdf",
+      },
+    ],
+  });
+
+  return { sent: true };
+}
+
 async function canSendEmail() {
   if (!env.smtpHost || !env.smtpFrom) {
     return false;
