@@ -1,41 +1,58 @@
-import { initDraftsStore } from "../src/db/sqlite.js";
+import { initDraftsStore } from "../src/db/mysql.js";
 import { getUserByEmail, createUser, updateUser } from "../src/services/users.service.js";
 
-initDraftsStore();
+void main();
 
-const args = parseArgs(process.argv.slice(2));
-const role = String(args.role || "").trim().toLowerCase();
-const email = normalizeEmail(args.email);
-const password = String(args.password || "");
-const displayName = String(args.name || args.displayName || "").trim();
-const specializzazione = String(args.specializzazione || "").trim();
-const professionalId = String(args.professionalId || args.professional_id || "").trim();
-const assignedTypes = String(args.assigned || args.assignedTypes || "")
-  .split(",")
-  .map((item) => item.trim().toLowerCase())
-  .filter(Boolean);
+async function main() {
+  await initDraftsStore();
 
-if (!role || !email || !password || !displayName) {
-  console.error(
-    "Uso: npm run user:upsert -- --role <admin|refertatore> --email <email> --password <password> --name <nome> [--specializzazione Neurologia] [--assigned emg,psg]",
-  );
-  process.exit(1);
-}
+  const args = parseArgs(process.argv.slice(2));
+  const role = String(args.role || "").trim().toLowerCase();
+  const email = normalizeEmail(args.email);
+  const password = String(args.password || "");
+  const displayName = String(args.name || args.displayName || "").trim();
+  const specializzazione = String(args.specializzazione || "").trim();
+  const professionalId = String(args.professionalId || args.professional_id || "").trim();
+  const assignedTypes = String(args.assigned || args.assignedTypes || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 
-if (role !== "admin" && role !== "refertatore") {
-  console.error("role deve essere admin oppure refertatore.");
-  process.exit(1);
-}
+  if (!role || !email || !password || !displayName) {
+    console.error(
+      "Uso: npm run user:upsert -- --role <admin|refertatore|professionista> --email <email> --password <password> --name <nome> [--specializzazione Neurologia] [--assigned emg,psg]",
+    );
+    process.exit(1);
+  }
 
-if (role === "refertatore" && !professionalId) {
-  console.error("Per un refertatore e obbligatorio --professionalId <id-professionista>.");
-  process.exit(1);
-}
+  if (!["admin", "refertatore", "professionista"].includes(role)) {
+    console.error("role deve essere admin, refertatore oppure professionista.");
+    process.exit(1);
+  }
 
-const existing = getUserByEmail(email);
+  if (role === "refertatore" && !professionalId) {
+    console.error("Per un refertatore e obbligatorio --professionalId <id-professionista>.");
+    process.exit(1);
+  }
 
-if (existing) {
-  const updated = updateUser(existing.id, {
+  const existing = getUserByEmail(email);
+
+  if (existing) {
+    const updated = updateUser(existing.id, {
+      role,
+      email,
+      password,
+      display_name: displayName,
+      professional_id: role === "refertatore" ? professionalId : null,
+      specializzazione: specializzazione || null,
+      active: true,
+      assignedTypes: role === "refertatore" ? assignedTypes : [],
+    });
+    console.log(`Utente aggiornato: ${updated.email} (${updated.role})`);
+    process.exit(0);
+  }
+
+  const created = createUser({
     role,
     email,
     password,
@@ -43,24 +60,11 @@ if (existing) {
     professional_id: role === "refertatore" ? professionalId : null,
     specializzazione: specializzazione || null,
     active: true,
+    must_change_password: role === "admin" ? 0 : 1,
     assignedTypes: role === "refertatore" ? assignedTypes : [],
   });
-  console.log(`Utente aggiornato: ${updated.email} (${updated.role})`);
-  process.exit(0);
+  console.log(`Utente creato: ${created.email} (${created.role})`);
 }
-
-const created = createUser({
-  role,
-  email,
-  password,
-  display_name: displayName,
-  professional_id: role === "refertatore" ? professionalId : null,
-  specializzazione: specializzazione || null,
-  active: true,
-  must_change_password: role === "admin" ? 0 : 1,
-  assignedTypes: role === "refertatore" ? assignedTypes : [],
-});
-console.log(`Utente creato: ${created.email} (${created.role})`);
 
 function parseArgs(argv) {
   const result = {};
@@ -97,3 +101,4 @@ function parseArgs(argv) {
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
+

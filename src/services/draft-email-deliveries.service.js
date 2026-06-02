@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getDb } from "../db/sqlite.js";
+import { getDb } from "../db/mysql.js";
 
 export function createDraftEmailDelivery({
   draftId,
@@ -106,3 +106,4 @@ function maskEmail(email) {
 
   return `${safeLocal}@${domain}`;
 }
+

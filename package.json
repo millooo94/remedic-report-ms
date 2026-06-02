@@ -4,6 +4,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "db:migrate": "node scripts/db-migrate.js",
+    "db:fresh": "node scripts/db-fresh.js",
     "user:upsert": "node scripts/upsert-user.js",
     "test:auth-flow": "node scripts/test-auth-flow.js"
   },
@@ -13,12 +15,14 @@
   "type": "module",
   "description": "",
   "dependencies": {
-    "better-sqlite3": "^12.10.0",
     "express": "^5.2.1",
     "googleapis": "^171.4.0",
+    "mysql2": "^3.15.3",
     "nodemailer": "^7.0.3",
+    "otplib": "^12.0.1",
     "open": "^11.0.0",
     "pdf-lib": "^1.17.1",
-    "puppeteer": "^24.37.5"
+    "puppeteer": "^24.37.5",
+    "qrcode": "^1.5.4"
   }
 }

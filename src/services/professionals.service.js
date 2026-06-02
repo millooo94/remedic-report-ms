@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getDb } from "../db/sqlite.js";
+import { getDb } from "../db/mysql.js";
 import { normalizeProfessionalSpecialization } from "../constants/professional-taxonomy.js";
 
 function createHttpError(status, message, fieldErrors = null) {
@@ -45,10 +45,18 @@ export function listProfessionals({
   const rows = db
     .prepare(
       `
-        SELECT *
-        FROM professionals
+        SELECT
+          p.*,
+          u.id AS reserved_user_id,
+          u.email AS reserved_user_email,
+          u.role AS reserved_user_role,
+          u.active AS reserved_user_active,
+          u.two_factor_enabled AS reserved_user_two_factor_enabled
+        FROM professionals p
+        LEFT JOIN users u
+          ON u.professional_id = p.id
         ${whereClause}
-        ORDER BY sort_order ASC, display_name ASC
+        ORDER BY p.sort_order ASC, p.display_name ASC
       `,
     )
     .all(params);
@@ -58,7 +66,23 @@ export function listProfessionals({
 
 export function getProfessionalById(id) {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM professionals WHERE id = ?").get(id);
+  const row = db
+    .prepare(
+      `
+        SELECT
+          p.*,
+          u.id AS reserved_user_id,
+          u.email AS reserved_user_email,
+          u.role AS reserved_user_role,
+          u.active AS reserved_user_active,
+          u.two_factor_enabled AS reserved_user_two_factor_enabled
+        FROM professionals p
+        LEFT JOIN users u
+          ON u.professional_id = p.id
+        WHERE p.id = ?
+      `,
+    )
+    .get(id);
 
   if (!row) {
     throw createHttpError(404, "Professionista non trovato.");
@@ -242,6 +266,18 @@ function mapProfessional(row) {
     is_refertatore: !!row.is_refertatore,
     active: !!row.active,
     sort_order: Number(row.sort_order || 0),
+    reserved_user_id: row.reserved_user_id || null,
+    reserved_user_email: row.reserved_user_email || null,
+    reserved_user_role: row.reserved_user_role || null,
+    reserved_user_active:
+      row.reserved_user_active === null || row.reserved_user_active === undefined
+        ? null
+        : !!row.reserved_user_active,
+    reserved_user_two_factor_enabled:
+      row.reserved_user_two_factor_enabled === null ||
+      row.reserved_user_two_factor_enabled === undefined
+        ? null
+        : !!row.reserved_user_two_factor_enabled,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -283,3 +319,5 @@ function assertProfessionalEmailAvailable(email, excludeId = null) {
     );
   }
 }
+
+

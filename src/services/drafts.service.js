@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { deleteAllDraftAttachments, listDraftAttachments } from "./draft-attachments.service.js";
-import { getDb } from "../db/sqlite.js";
+import { getDb } from "../db/mysql.js";
 import { sendDraftAssignedEmail } from "./email.service.js";
 import { LEGACY_DRAFT_STATUS_MAP } from "../constants/drafts.js";
 
@@ -756,6 +756,63 @@ export function listRefertatoreArchive(userId, tipoReferto) {
   return rows.map(toDraftSummary);
 }
 
+export function listReservedPersonalArchive(authUser, tipoReferto = "") {
+  const db = getDb();
+  const clauses = ["stato IN ('completato', 'firmato_caricato')"];
+  const params = {};
+
+  if (authUser?.professionalId) {
+    clauses.push(
+      "(assigned_refertatore_id = @user_id OR medico_refertatore_id = @professional_id)",
+    );
+    params.user_id = authUser.id;
+    params.professional_id = authUser.professionalId;
+  } else {
+    clauses.push("assigned_refertatore_id = @user_id");
+    params.user_id = authUser?.id || null;
+  }
+
+  if (tipoReferto === "standard" || tipoReferto === "emg" || tipoReferto === "psg") {
+    clauses.push("tipo_referto = @tipo_referto");
+    params.tipo_referto = tipoReferto;
+  }
+
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          id,
+          tipo_referto,
+          stato,
+          paziente_nome,
+          paziente_cognome,
+          paziente_nome_completo,
+          data_nascita,
+          codice_fiscale,
+          telefono,
+          email,
+          medico_refertatore,
+          medico_refertatore_id,
+          assigned_refertatore_id,
+          assigned_refertatore_email,
+          assigned_refertatore_name,
+          assigned_refertatore_specializzazione,
+          specializzazione,
+          prestazione,
+          data_esame,
+          created_at,
+          updated_at,
+          completed_at
+        FROM report_drafts
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY completed_at DESC, updated_at DESC
+      `,
+    )
+    .all(params);
+
+  return rows.map(toDraftSummary);
+}
+
 export function getRefertatoreDraftById(userId, id) {
   const draft = getDraftById(id);
 
@@ -780,6 +837,28 @@ export function getRefertatoreDraftById(userId, id) {
 
   return {
     ...getDraftById(id),
+    attachments: listDraftAttachments(id),
+  };
+}
+
+export function getReservedArchiveDraftById(authUser, id) {
+  const draft = getDraftById(id);
+  const canAccess =
+    authUser?.role === "admin" ||
+    draft.summary.assigned_refertatore_id === authUser?.id ||
+    (authUser?.professionalId &&
+      draft.summary.medico_refertatore_id === authUser.professionalId);
+
+  if (!canAccess) {
+    throw createHttpError(403, "Il referto non e disponibile per questo account.");
+  }
+
+  if (draft.stato !== "completato" && draft.stato !== "firmato_caricato") {
+    throw createHttpError(403, "Il referto non e disponibile in archivio.");
+  }
+
+  return {
+    ...draft,
     attachments: listDraftAttachments(id),
   };
 }
@@ -939,3 +1018,4 @@ function sanitizePaginationValue(value, fallback, min, max) {
 
   return Math.min(Math.max(Math.trunc(parsed), min), max);
 }
+

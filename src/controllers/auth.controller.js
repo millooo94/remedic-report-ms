@@ -3,14 +3,22 @@ import {
   buildAuthUserResponse,
   changeAuthenticatedPassword,
   createPasswordResetRequest,
+  getTwoFactorSetupForLogin,
   loginWithPassword,
+  regenerateAuthenticatedRecoveryCodes,
   resetPasswordWithToken,
   revokeSession,
+  verifyTwoFactorLoginChallenge,
+  verifyTwoFactorLoginRecoveryCode,
+  verifyTwoFactorSetupForLogin,
 } from "../services/auth.service.js";
 import { saveUserAvatar, updateOwnProfile } from "../services/users.service.js";
 import { AUDIT_ACTIONS, createAuditLog } from "../services/audit.service.js";
 import {
+  sendPasswordChangedSecurityEmail,
   sendPasswordResetEmail,
+  sendRecoveryCodeUsedEmail,
+  sendTwoFactorEnabledEmail,
 } from "../services/email.service.js";
 
 function handleAuthError(res, error, fallbackMessage = "Errore interno di autenticazione.") {
@@ -34,24 +42,11 @@ export function loginController(req, res) {
     const result = loginWithPassword({
       email: req.body?.email,
       password: req.body?.password,
-      ipAddress: req.ip,
-      userAgent: req.headers["user-agent"],
     });
-
-    setSessionCookies(res, result.sessionCookieValue, result.csrfToken, result.expiresAt);
-    createAuditLog({
-      userId: result.user.id,
-      role: result.user.role,
-      action: AUDIT_ACTIONS.LOGIN_SUCCESS,
-      entityType: "user",
-      entityId: result.user.id,
-      ipAddress: req.ip,
-      userAgent: req.headers["user-agent"],
-    });
-
     return res.json({
       user: result.user,
-      csrfToken: result.csrfToken,
+      nextStep: result.nextStep,
+      challengeToken: result.challengeToken,
       expiresAt: result.expiresAt,
     });
   } catch (error) {
@@ -67,6 +62,172 @@ export function loginController(req, res) {
       },
     });
     return handleAuthError(res, error, "Errore interno durante il login.");
+  }
+}
+
+export async function twoFactorSetupController(req, res) {
+  try {
+    const payload = await getTwoFactorSetupForLogin(req.body?.challengeToken);
+    createAuditLog({
+      action: AUDIT_ACTIONS.TWO_FACTOR_SETUP_STARTED,
+      role: null,
+      entityType: "session",
+      entityId: null,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    return res.json(payload);
+  } catch (error) {
+    return handleAuthError(res, error, "Errore interno durante la configurazione 2FA.");
+  }
+}
+
+export function twoFactorVerifySetupController(req, res) {
+  try {
+    const result = verifyTwoFactorSetupForLogin({
+      challengeToken: req.body?.challengeToken,
+      code: req.body?.code,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    setSessionCookies(res, result.sessionCookieValue, result.csrfToken, result.expiresAt);
+    createAuditLog({
+      userId: result.user.id,
+      role: result.user.role,
+      action: AUDIT_ACTIONS.TWO_FACTOR_ENABLED,
+      entityType: "user",
+      entityId: result.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    void sendTwoFactorEnabledEmail({
+      email: result.user.email,
+      displayName: result.user.displayName,
+    }).catch((error) => {
+      console.error("2FA enabled email error:", error?.message || error);
+    });
+    return res.json({
+      user: result.user,
+      csrfToken: result.csrfToken,
+      expiresAt: result.expiresAt,
+      recoveryCodes: result.recoveryCodes,
+    });
+  } catch (error) {
+    createAuditLog({
+      action: AUDIT_ACTIONS.TWO_FACTOR_CHALLENGE_FAILED,
+      role: null,
+      entityType: "session",
+      entityId: null,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    return handleAuthError(res, error, "Errore interno durante l'attivazione 2FA.");
+  }
+}
+
+export function twoFactorChallengeController(req, res) {
+  try {
+    const result = verifyTwoFactorLoginChallenge({
+      challengeToken: req.body?.challengeToken,
+      code: req.body?.code,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    setSessionCookies(res, result.sessionCookieValue, result.csrfToken, result.expiresAt);
+    createAuditLog({
+      userId: result.user.id,
+      role: result.user.role,
+      action: AUDIT_ACTIONS.TWO_FACTOR_CHALLENGE_SUCCESS,
+      entityType: "user",
+      entityId: result.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    createAuditLog({
+      userId: result.user.id,
+      role: result.user.role,
+      action: AUDIT_ACTIONS.LOGIN_SUCCESS,
+      entityType: "user",
+      entityId: result.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    return res.json({
+      user: result.user,
+      csrfToken: result.csrfToken,
+      expiresAt: result.expiresAt,
+    });
+  } catch (error) {
+    createAuditLog({
+      action: AUDIT_ACTIONS.TWO_FACTOR_CHALLENGE_FAILED,
+      role: null,
+      entityType: "session",
+      entityId: null,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    return handleAuthError(res, error, "Errore interno durante la verifica 2FA.");
+  }
+}
+
+export function twoFactorRecoveryCodeController(req, res) {
+  try {
+    const result = verifyTwoFactorLoginRecoveryCode({
+      challengeToken: req.body?.challengeToken,
+      recoveryCode: req.body?.recoveryCode,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    setSessionCookies(res, result.sessionCookieValue, result.csrfToken, result.expiresAt);
+    createAuditLog({
+      userId: result.user.id,
+      role: result.user.role,
+      action: AUDIT_ACTIONS.TWO_FACTOR_RECOVERY_CODE_USED,
+      entityType: "user",
+      entityId: result.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    void sendRecoveryCodeUsedEmail({
+      email: result.user.email,
+      displayName: result.user.displayName,
+    }).catch((error) => {
+      console.error("Recovery code email error:", error?.message || error);
+    });
+    createAuditLog({
+      userId: result.user.id,
+      role: result.user.role,
+      action: AUDIT_ACTIONS.LOGIN_SUCCESS,
+      entityType: "user",
+      entityId: result.user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    return res.json({
+      user: result.user,
+      csrfToken: result.csrfToken,
+      expiresAt: result.expiresAt,
+    });
+  } catch (error) {
+    return handleAuthError(res, error, "Errore interno durante l'uso del codice di recupero.");
+  }
+}
+
+export function regenerateRecoveryCodesController(req, res) {
+  try {
+    const recoveryCodes = regenerateAuthenticatedRecoveryCodes(req.authUser?.id);
+    createAuditLog({
+      userId: req.authUser?.id || null,
+      role: req.authUser?.role || null,
+      action: AUDIT_ACTIONS.TWO_FACTOR_RECOVERY_CODES_REGENERATED,
+      entityType: "user",
+      entityId: req.authUser?.id || null,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+    return res.json({ recoveryCodes });
+  } catch (error) {
+    return handleAuthError(res, error, "Errore interno durante la rigenerazione dei codici.");
   }
 }
 
@@ -153,6 +314,12 @@ export function resetPasswordController(req, res) {
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
     });
+    void sendPasswordChangedSecurityEmail({
+      email: user.email,
+      displayName: user.display_name || user.displayName,
+    }).catch((error) => {
+      console.error("Reset password security email error:", error?.message || error);
+    });
 
     clearSessionCookies(res);
     return res.json({
@@ -184,6 +351,12 @@ export function changePasswordController(req, res) {
       entityId: user.id,
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
+    });
+    void sendPasswordChangedSecurityEmail({
+      email: user.email,
+      displayName: user.display_name || user.displayName,
+    }).catch((error) => {
+      console.error("Change password security email error:", error?.message || error);
     });
 
     return res.json({

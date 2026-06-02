@@ -54,7 +54,18 @@ AUTH_COOKIE_SAMESITE=none
 AUTH_COOKIE_SECURE=true
 SESSION_TTL_HOURS=8
 
-DRAFTS_DB_PATH=/var/lib/remedic-report/drafts.sqlite
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=remedic_report
+MYSQL_USER=remedic_report_user
+MYSQL_PASSWORD=
+MYSQL_CONNECTION_LIMIT=10
+
+APP_ENCRYPTION_KEY=
+TOTP_ISSUER="Remedic Report"
+ALLOWED_CREATION_IPS=1.2.3.4,5.6.7.8
+TRUST_PROXY=loopback, linklocal, uniquelocal
+
 DRAFTS_UPLOAD_DIR=/var/lib/remedic-report/uploads
 
 ROOT_FOLDER=
@@ -72,6 +83,26 @@ SMTP_FROM=
 SIGNED_PDF_NOTIFICATION_EMAIL=humancaretelemedicine@gmail.com
 ```
 
+## Bootstrap database MySQL
+
+Assicurati che il database MySQL esista e che l'utente applicativo abbia permessi su schema e tabelle:
+
+```sql
+CREATE DATABASE remedic_report CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'remedic_report_user'@'127.0.0.1' IDENTIFIED BY 'change-me';
+GRANT ALL PRIVILEGES ON remedic_report.* TO 'remedic_report_user'@'127.0.0.1';
+FLUSH PRIVILEGES;
+```
+
+Poi esegui le migration:
+
+```bash
+cd /var/www/remedic-report-ms
+npm run db:migrate
+```
+
+Questa revisione crea lo schema MySQL da zero. Non include una migrazione automatica dei dati storici da SQLite a MySQL: se devi portare dati esistenti, serve uno script dedicato di import.
+
 ## Directory persistenti
 
 ```bash
@@ -80,7 +111,7 @@ sudo mkdir -p /var/lib/remedic-report/uploads
 sudo chown -R camillo:camillo /var/lib/remedic-report
 ```
 
-Nota: sia il file SQLite sia la directory uploads contengono dati sanitari e devono stare fuori dal repository, con permessi stretti e backup protetti.
+Nota: la directory uploads contiene dati sanitari e deve stare fuori dal repository, con permessi stretti e backup protetti. Il database MySQL va protetto con accesso limitato, backup cifrati e retention coerente con le policy sanitarie.
 
 ## Sessioni HttpOnly e CORS
 
@@ -106,9 +137,9 @@ Il backend distingue ora tre casi:
   genera un PDF temporaneo senza salvarlo su Google Drive. Questo flusso va usato per EMG e PSG quando il documento deve essere controllato o firmato esternamente.
 - `POST /drafts/:id/signed-pdf`
   oppure `POST /refertatore/drafts/:id/signed-pdf`
-  riceve un PDF gia firmato, lo salva negli uploads persistenti e poi lo archivia su Google Drive come documento definitivo del refertatore assegnato.
+  riceve un PDF gia firmato e lo salva negli uploads persistenti del sistema.
 
-Per EMG e PSG, quindi, il documento definitivo su Drive nasce solo dal caricamento del PDF gia firmato, non dall'export temporaneo.
+Per EMG e PSG, il documento definitivo su Drive viene ora archiviato dall'Admin dall'Archivio asincroni tramite l'azione dedicata `Salva su Drive`, non dall'export temporaneo e non automaticamente dal caricamento firmato.
 
 ## Creazione utenti da server
 
@@ -122,22 +153,37 @@ npm run user:upsert -- --role admin --email admin@remedic.it --password "ChangeM
 ### Refertatore EMG
 
 ```bash
-npm run user:upsert -- --role refertatore --email sebastianoarenaneurologo@gmail.com --password "Rmdc-Neuro!2026-Arena" --name "Dott. Sebastiano Arena" --specializzazione "Neurologia" --assigned emg
+npm run user:upsert -- --role refertatore --professionalId <PROFESSIONAL_ID> --email refertatore.emg@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore EMG" --specializzazione "Neurologia" --assigned emg
 ```
 
 ### Refertatore PSG
 
 ```bash
-npm run user:upsert -- --role refertatore --email refertatore.psg@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore PSG" --specializzazione "Pneumologia" --assigned psg
+npm run user:upsert -- --role refertatore --professionalId <PROFESSIONAL_ID> --email refertatore.psg@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore PSG" --specializzazione "Pneumologia" --assigned psg
 ```
 
 ### Refertatore EMG + PSG
 
 ```bash
-npm run user:upsert -- --role refertatore --email refertatore.misto@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore Misto" --specializzazione "Neurologia" --assigned emg,psg
+npm run user:upsert -- --role refertatore --professionalId <PROFESSIONAL_ID> --email refertatore.misto@remedic.it --password "ChangeMe!2026" --name "Dott. Refertatore Misto" --specializzazione "Neurologia" --assigned emg,psg
+```
+
+### Professionista con sola area riservata
+
+```bash
+npm run user:upsert -- --role professionista --email professionista@remedic.it --password "ChangeMe!2026" --name "Dott. Professionista" --specializzazione "Medicina Interna"
 ```
 
 La password mostrata sopra e solo temporanea: non viene salvata in chiaro nel DB e puo essere cambiata rilanciando lo stesso comando con una nuova password.
+Al primo accesso l'utente dovra configurare obbligatoriamente la 2FA tramite Authenticator App e salvare i recovery code mostrati una sola volta.
+
+## Regole accesso e IP
+
+- l'Area Admin resta accessibile da qualunque IP, ma richiede login, sessione valida, CSRF e 2FA obbligatoria.
+- l'Area Riservata per professionisti e refertatori resta accessibile da qualunque IP, ma richiede login e 2FA obbligatoria.
+- il blocco IP vale solo per la creazione operativa dei referti e per gli endpoint pubblici collegati al wizard.
+- `ALLOWED_CREATION_IPS` deve contenere gli IP pubblici autorizzati della struttura o delle postazioni abilitate.
+- i refertatori asincroni autenticati possono comunque creare i soli tipi di referto coerenti con i loro assignment anche da IP non presente in whitelist.
 
 ## Avvio locale sul server
 
@@ -225,7 +271,7 @@ sudo certbot --nginx -d report-api.remedic.it
 
 Includi nei backup:
 
-- `DRAFTS_DB_PATH`
+- database MySQL `remedic_report`
 - `DRAFTS_UPLOAD_DIR`
 
 Per EMG e PSG gli uploads contengono:
@@ -246,4 +292,4 @@ sudo systemctl status remedic-report-ms
 journalctl -u remedic-report-ms -f
 ```
 
-Se aggiungi o aggiorni dipendenze native come `better-sqlite3`, assicurati di eseguire `npm ci` o `npm install` anche sul server prima del riavvio del servizio.
+Se aggiungi o aggiorni dipendenze applicative, esegui sempre `npm ci` o `npm install`, poi `npm run db:migrate`, prima del riavvio del servizio.

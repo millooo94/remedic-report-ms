@@ -28,9 +28,12 @@ const authCookieSecure =
 export const env = {
   nodeEnv,
   port: Number(process.env.PORT || 4010),
-  draftsDbPath:
-    process.env.DRAFTS_DB_PATH?.trim() ||
-    path.resolve(process.cwd(), "data", "drafts.sqlite"),
+  mysqlHost: process.env.MYSQL_HOST?.trim() || "127.0.0.1",
+  mysqlPort: Number(process.env.MYSQL_PORT || 3306),
+  mysqlDatabase: process.env.MYSQL_DATABASE?.trim() || "remedic_report",
+  mysqlUser: process.env.MYSQL_USER?.trim() || "remedic_report_user",
+  mysqlPassword: process.env.MYSQL_PASSWORD || "",
+  mysqlConnectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 10),
   draftsUploadDir:
     process.env.DRAFTS_UPLOAD_DIR?.trim() ||
     path.resolve(process.cwd(), "data", "uploads"),
@@ -62,6 +65,12 @@ export const env = {
   signedPdfNotificationEmail:
     process.env.SIGNED_PDF_NOTIFICATION_EMAIL?.trim() ||
     "humancaretelemedicine@gmail.com",
+  appEncryptionKey: process.env.APP_ENCRYPTION_KEY?.trim() || "",
+  totpIssuer: process.env.TOTP_ISSUER?.trim() || "Remedic Report",
+  allowedCreationIps: parseIpList(process.env.ALLOWED_CREATION_IPS),
+  trustProxy:
+    process.env.TRUST_PROXY?.trim() ||
+    (nodeEnv === "production" ? "loopback, linklocal, uniquelocal" : "loopback"),
   corsOrigin: process.env.CORS_ORIGIN || "",
   allowedOrigins: buildAllowedOrigins(frontendUrl, configuredCorsOrigins),
 };
@@ -112,6 +121,13 @@ function parseSameSite(value) {
   if (normalized === "none") return "none";
   if (normalized === "strict") return "strict";
   return "lax";
+}
+
+function parseIpList(rawValue) {
+  return String(rawValue || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 function loadLocalEnvFiles() {

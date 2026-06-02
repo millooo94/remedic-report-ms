@@ -17,7 +17,12 @@ export function requireRefertatoreAuth(req, res, next) {
   const sessionValue = cookies[env.authSessionCookieName];
   const sessionUser = getSessionUser(sessionValue);
 
-  if (!sessionUser || (sessionUser.user.role !== "refertatore" && sessionUser.user.role !== "admin")) {
+  if (
+    !sessionUser ||
+    (sessionUser.user.role !== "refertatore" &&
+      sessionUser.user.role !== "admin" &&
+      sessionUser.user.role !== "professionista")
+  ) {
     return res.status(401).json({
       error: "Sessione area riservata mancante o non valida.",
     });
@@ -45,7 +50,9 @@ export function requireDraftReadAccess(req, res, next) {
       const draft = getDraftById(req.params.id);
       if (
         req.authUser?.role === "admin" ||
-        draft.summary.assigned_refertatore_id === req.authUser?.id
+        draft.summary.assigned_refertatore_id === req.authUser?.id ||
+        (req.authUser?.professionalId &&
+          draft.summary.medico_refertatore_id === req.authUser?.professionalId)
       ) {
         return next();
       }
@@ -63,5 +70,29 @@ export function requireDraftReadAccess(req, res, next) {
 }
 
 export function requireDraftWriteAccess(req, res, next) {
-  return requireDraftReadAccess(req, res, next);
+  return requireRefertatoreAuth(req, res, () => {
+    if (!req.params?.id) {
+      return next();
+    }
+
+    try {
+      const draft = getDraftById(req.params.id);
+      if (
+        req.authUser?.role === "admin" ||
+        (req.authUser?.role === "refertatore" &&
+          draft.summary.assigned_refertatore_id === req.authUser?.id)
+      ) {
+        return next();
+      }
+
+      return res.status(403).json({
+        error: "Il referto non puo essere modificato da questo account.",
+      });
+    } catch (error) {
+      const status = Number(error?.status || 500);
+      return res.status(status).json({
+        error: error?.message || "Errore accesso scrittura referto.",
+      });
+    }
+  });
 }

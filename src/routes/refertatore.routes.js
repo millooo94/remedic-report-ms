@@ -2,13 +2,15 @@ import { Router } from "express";
 import {
   completeRefertatoreDraftController,
   exportPreviewRefertatoreDraftController,
+  getReservedArchiveDraftController,
   getRefertatoreDraftController,
+  listReservedPersonalArchiveController,
   listRefertatoreArchiveController,
   listRefertatoreDraftsController,
   meRefertatoreController,
   updateRefertatoreDraftController,
 } from "../controllers/refertatore.controller.js";
-import { requireAuth, requireRole } from "../middleware/require-auth.js";
+import { requireAuth } from "../middleware/require-auth.js";
 import { requireCsrf } from "../middleware/require-csrf.js";
 import { uploadSignedDraftPdfController } from "../controllers/draft-attachments.controller.js";
 import { validateSignedDraftPdfRequest } from "../middleware/validate-draft-attachment-request.js";
@@ -16,11 +18,13 @@ import { requireDraftWriteAccess } from "../middleware/require-refertatore-auth.
 
 const router = Router();
 
-router.use("/refertatore", requireAuth, requireRole("refertatore"));
+router.use("/refertatore", requireAuth);
 
 router.get("/refertatore/me", meRefertatoreController);
 router.get("/refertatore/drafts", listRefertatoreDraftsController);
 router.get("/refertatore/archive", listRefertatoreArchiveController);
+router.get("/refertatore/personal-archive", listReservedPersonalArchiveController);
+router.get("/refertatore/archive/:id", getReservedArchiveDraftController);
 router.get("/refertatore/drafts/:id", getRefertatoreDraftController);
 router.put("/refertatore/drafts/:id", requireCsrf, updateRefertatoreDraftController);
 router.post("/refertatore/drafts/:id/complete", requireCsrf, completeRefertatoreDraftController);

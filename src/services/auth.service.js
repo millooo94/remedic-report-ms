@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { env } from "../config/env.js";
-import { getDb } from "../db/sqlite.js";
+import { getDb } from "../db/mysql.js";
 import {
   changeUserPassword,
   getUserByEmail,
@@ -14,6 +14,15 @@ import {
   hashOpaqueToken,
   validatePasswordStrength,
 } from "./password.service.js";
+import {
+  beginTwoFactorLogin,
+  beginTwoFactorSetup,
+  completeTwoFactorSetup,
+  getTwoFactorSetupPayload,
+  regenerateTwoFactorRecoveryCodes,
+  verifyTwoFactorChallenge,
+  verifyTwoFactorRecoveryCode,
+} from "./two-factor.service.js";
 
 const RESET_TTL_MS = 30 * 60 * 1000;
 
@@ -31,6 +40,7 @@ export function buildAuthUserResponse(user) {
   return {
     id: user.id,
     role: user.role,
+    professionalId: user.professional_id || null,
     email: user.email,
     firstName: user.first_name || null,
     lastName: user.last_name || null,
@@ -39,6 +49,7 @@ export function buildAuthUserResponse(user) {
     avatarDataUrl: user.avatar_data_url || null,
     active: user.active,
     mustChangePassword: user.must_change_password,
+    twoFactorEnabled: !!user.two_factor_enabled,
     assignedTypes: user.assignedTypes || [],
   };
 }
@@ -46,8 +57,6 @@ export function buildAuthUserResponse(user) {
 export function loginWithPassword({
   email,
   password,
-  ipAddress,
-  userAgent,
 }) {
   const user = verifyUserCredentials(email, password);
 
@@ -55,68 +64,82 @@ export function loginWithPassword({
     throw createHttpError(401, "Credenziali non valide.");
   }
 
-  const sessionId = crypto.randomUUID();
-  const sessionSecret = generateOpaqueToken(32);
-  const csrfToken = generateOpaqueToken(24);
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + buildSessionTtlMs()).toISOString();
+  if (user.two_factor_enabled) {
+    const challenge = beginTwoFactorLogin(user.id);
+    return {
+      nextStep: "two_factor_challenge",
+      challengeToken: challenge.challengeToken,
+      expiresAt: challenge.expiresAt,
+      user: buildAuthUserResponse(user),
+    };
+  }
 
-  getDb()
-    .prepare(
-      `
-        INSERT INTO auth_sessions (
-          id,
-          user_id,
-          session_hash,
-          role,
-          csrf_token_hash,
-          ip_address,
-          user_agent,
-          expires_at,
-          revoked_at,
-          created_at,
-          last_seen_at
-        ) VALUES (
-          @id,
-          @user_id,
-          @session_hash,
-          @role,
-          @csrf_token_hash,
-          @ip_address,
-          @user_agent,
-          @expires_at,
-          NULL,
-          @created_at,
-          @last_seen_at
-        )
-      `,
-    )
-    .run({
-      id: sessionId,
-      user_id: user.id,
-      session_hash: hashOpaqueToken(sessionSecret),
-      role: user.role,
-      csrf_token_hash: hashOpaqueToken(csrfToken),
-      ip_address: ipAddress || null,
-      user_agent: sanitizeUserAgent(userAgent),
-      expires_at: expiresAt,
-      created_at: now.toISOString(),
-      last_seen_at: now.toISOString(),
-    });
-
-  markUserLogin(user.id);
-
+  const setupChallenge = beginTwoFactorSetup(user.id);
   return {
+    nextStep: "two_factor_setup",
+    challengeToken: setupChallenge.challengeToken,
+    expiresAt: setupChallenge.expiresAt,
     user: buildAuthUserResponse(user),
-    sessionId,
-    sessionCookieValue: `${sessionId}.${sessionSecret}`,
-    csrfToken,
-    expiresAt,
   };
 }
 
-function buildSessionTtlMs() {
-  return Number(env.sessionTtlHours || 8) * 60 * 60 * 1000;
+export function getTwoFactorSetupForLogin(challengeToken) {
+  return getTwoFactorSetupPayload(challengeToken);
+}
+
+export function verifyTwoFactorSetupForLogin({
+  challengeToken,
+  code,
+  ipAddress,
+  userAgent,
+}) {
+  const result = completeTwoFactorSetup(challengeToken, code);
+  markUserLogin(result.user.id);
+  const session = createSessionForUser({
+    user: result.user,
+    ipAddress,
+    userAgent,
+  });
+
+  return {
+    ...session,
+    user: buildAuthUserResponse(result.user),
+    recoveryCodes: result.recoveryCodes,
+  };
+}
+
+export function verifyTwoFactorLoginChallenge({
+  challengeToken,
+  code,
+  ipAddress,
+  userAgent,
+}) {
+  const user = verifyTwoFactorChallenge(challengeToken, code);
+  markUserLogin(user.id);
+  const session = createSessionForUser({ user, ipAddress, userAgent });
+  return {
+    ...session,
+    user: buildAuthUserResponse(user),
+  };
+}
+
+export function verifyTwoFactorLoginRecoveryCode({
+  challengeToken,
+  recoveryCode,
+  ipAddress,
+  userAgent,
+}) {
+  const user = verifyTwoFactorRecoveryCode(challengeToken, recoveryCode);
+  markUserLogin(user.id);
+  const session = createSessionForUser({ user, ipAddress, userAgent });
+  return {
+    ...session,
+    user: buildAuthUserResponse(user),
+  };
+}
+
+export function regenerateAuthenticatedRecoveryCodes(userId) {
+  return regenerateTwoFactorRecoveryCodes(userId);
 }
 
 export function getSessionUser(sessionCookieValue) {
@@ -262,6 +285,68 @@ export function changeAuthenticatedPassword({
 
   revokeOtherUserSessions(userId, currentSessionId);
   return updatedUser;
+}
+
+function createSessionForUser({ user, ipAddress, userAgent }) {
+  const sessionId = crypto.randomUUID();
+  const sessionSecret = generateOpaqueToken(32);
+  const csrfToken = generateOpaqueToken(24);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + buildSessionTtlMs()).toISOString();
+
+  getDb()
+    .prepare(
+      `
+        INSERT INTO auth_sessions (
+          id,
+          user_id,
+          session_hash,
+          role,
+          csrf_token_hash,
+          ip_address,
+          user_agent,
+          expires_at,
+          revoked_at,
+          created_at,
+          last_seen_at
+        ) VALUES (
+          @id,
+          @user_id,
+          @session_hash,
+          @role,
+          @csrf_token_hash,
+          @ip_address,
+          @user_agent,
+          @expires_at,
+          NULL,
+          @created_at,
+          @last_seen_at
+        )
+      `,
+    )
+    .run({
+      id: sessionId,
+      user_id: user.id,
+      session_hash: hashOpaqueToken(sessionSecret),
+      role: user.role,
+      csrf_token_hash: hashOpaqueToken(csrfToken),
+      ip_address: ipAddress || null,
+      user_agent: sanitizeUserAgent(userAgent),
+      expires_at: expiresAt,
+      created_at: now.toISOString(),
+      last_seen_at: now.toISOString(),
+    });
+
+  return {
+    sessionId,
+    sessionCookieValue: `${sessionId}.${sessionSecret}`,
+    csrfToken,
+    expiresAt,
+  };
+}
+
+function buildSessionTtlMs() {
+  return Number(env.sessionTtlHours || 8) * 60 * 60 * 1000;
 }
 
 function revokeAllUserSessions(userId) {

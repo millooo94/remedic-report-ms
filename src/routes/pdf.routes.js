@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireCreationAccess } from "../middleware/require-creation-access.js";
 import { requireApiKey } from "../middleware/require-api-key.js";
 import { validatePdfRequest } from "../middleware/validate-pdf-request.js";
 import {
@@ -8,7 +9,7 @@ import {
 
 const router = Router();
 
-router.post("/pdf", requireApiKey, validatePdfRequest, generatePdfController);
+router.post("/pdf", requireApiKey, requireCreationAccess, validatePdfRequest, generatePdfController);
 router.post(
   "/pdf/preview",
   requireApiKey,

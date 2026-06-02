@@ -16,6 +16,7 @@ import {
   uploadSignedDraftPdfController,
 } from "../controllers/draft-attachments.controller.js";
 import { requireApiKey } from "../middleware/require-api-key.js";
+import { requireCreationAccess } from "../middleware/require-creation-access.js";
 import {
   requireDraftReadAccess,
   requireDraftWriteAccess,
@@ -32,27 +33,30 @@ import {
 
 const router = Router();
 
-router.post("/drafts", requireApiKey, validateCreateDraftRequest, createDraftController);
-router.get("/drafts", requireApiKey, listDraftsController);
-router.get("/drafts/:id", requireApiKey, getDraftController);
-router.put("/drafts/:id", requireApiKey, validateUpdateDraftRequest, updateDraftController);
+router.post("/drafts", requireApiKey, requireCreationAccess, validateCreateDraftRequest, createDraftController);
+router.get("/drafts", requireApiKey, requireCreationAccess, listDraftsController);
+router.get("/drafts/:id", requireApiKey, requireCreationAccess, getDraftController);
+router.put("/drafts/:id", requireApiKey, requireCreationAccess, validateUpdateDraftRequest, updateDraftController);
 router.patch(
   "/drafts/:id/status",
   requireApiKey,
+  requireCreationAccess,
   validateDraftStatusRequest,
   updateDraftStatusController,
 );
-router.post("/drafts/:id/send-to-refertatore", requireApiKey, sendDraftToRefertatoreController);
-router.delete("/drafts/:id", requireApiKey, deleteDraftController);
+router.post("/drafts/:id/send-to-refertatore", requireApiKey, requireCreationAccess, sendDraftToRefertatoreController);
+router.delete("/drafts/:id", requireApiKey, requireCreationAccess, deleteDraftController);
 router.post(
   "/drafts/:id/attachments",
   requireApiKey,
+  requireCreationAccess,
   validateCreateDraftAttachmentRequest,
   createDraftAttachmentController,
 );
 router.delete(
   "/drafts/:id/attachments/:attachmentId",
   requireApiKey,
+  requireCreationAccess,
   deleteDraftAttachmentController,
 );
 

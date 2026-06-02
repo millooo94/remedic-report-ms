@@ -7,7 +7,7 @@ import {
   updateProfessionalStatus,
 } from "../services/professionals.service.js";
 import { AUDIT_ACTIONS, createAuditLog } from "../services/audit.service.js";
-import { listRefertatoriByType } from "../services/users.service.js";
+import { listRefertatoriByType, upsertProfessionalReservedUser } from "../services/users.service.js";
 
 function handleError(res, error, fallbackMessage) {
   const status = Number(error?.status || 500);
@@ -77,6 +77,7 @@ export function getProfessionalController(req, res) {
 export function createProfessionalController(req, res) {
   try {
     const professional = createProfessional(req.body);
+    syncProfessionalReservedAreaIfRequested(professional, req.body, true);
     createAuditLog({
       userId: req.authUser?.id,
       role: req.authUser?.role,
@@ -95,6 +96,7 @@ export function createProfessionalController(req, res) {
 export function updateProfessionalController(req, res) {
   try {
     const professional = updateProfessional(req.params.id, req.body);
+    syncProfessionalReservedAreaIfRequested(professional, req.body, false);
     createAuditLog({
       userId: req.authUser?.id,
       role: req.authUser?.role,
@@ -154,4 +156,22 @@ export function deleteProfessionalController(req, res) {
   } catch (error) {
     return handleError(res, error, "Errore interno nella disattivazione professionista.");
   }
+}
+
+function syncProfessionalReservedAreaIfRequested(professional, payload, isCreate) {
+  const shouldCreateReservedArea =
+    payload?.create_reserved_area === true ||
+    payload?.create_reserved_area === 1 ||
+    payload?.create_reserved_area === "1";
+
+  if (!shouldCreateReservedArea && !professional?.reserved_user_id) {
+    return professional;
+  }
+
+  return upsertProfessionalReservedUser(professional.id, {
+    email: payload?.reserved_email ?? professional.email,
+    password: String(payload?.reserved_password || ""),
+    active: professional.active,
+    mustChangePassword: isCreate || !!String(payload?.reserved_password || "").trim(),
+  });
 }

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { env } from "../config/env.js";
-import { getDb, resolveUploadsRoot } from "../db/sqlite.js";
+import { getDb, resolveUploadsRoot } from "../db/mysql.js";
 import {
   hashPassword,
   validatePasswordStrength,
@@ -104,6 +104,19 @@ export function getUserByEmail(email) {
   return row || null;
 }
 
+export function getUserByProfessionalId(professionalId) {
+  const normalizedId = normalizeNullableString(professionalId);
+  if (!normalizedId) {
+    return null;
+  }
+
+  const row = getDb()
+    .prepare("SELECT id FROM users WHERE professional_id = ? LIMIT 1")
+    .get(normalizedId);
+
+  return row?.id ? getUserById(row.id) : null;
+}
+
 export function getUserPasswordHashById(id) {
   const row = getDb()
     .prepare("SELECT password_hash FROM users WHERE id = ?")
@@ -117,6 +130,23 @@ export function getUserPasswordHashById(id) {
 }
 
 export function createUser(payload) {
+  const requestedRole = String(payload?.role || "").trim();
+  const requestedProfessionalId = normalizeNullableString(
+    payload?.professional_id || payload?.professionalId,
+  );
+
+  if (requestedRole === "refertatore" && requestedProfessionalId) {
+    const existingLinkedUser = getUserByProfessionalId(requestedProfessionalId);
+    if (existingLinkedUser?.role === "professionista") {
+      return updateUser(existingLinkedUser.id, {
+        ...payload,
+        id: existingLinkedUser.id,
+        role: "refertatore",
+        active: true,
+      });
+    }
+  }
+
   const normalized = normalizeUserPayload(payload, true);
   const db = getDb();
   const now = new Date().toISOString();
@@ -480,6 +510,62 @@ export function saveUserAvatar(userId, payload) {
   return getUserById(user.id);
 }
 
+export function upsertProfessionalReservedUser(
+  professionalId,
+  {
+    email = null,
+    password = "",
+    active = true,
+    mustChangePassword = true,
+  } = {},
+) {
+  const professional = getProfessionalById(professionalId);
+  const existingUser = getUserByProfessionalId(professional.id);
+  const effectiveEmail =
+    normalizeNullableString(email) || professional.email || null;
+
+  if (!effectiveEmail) {
+    throw createHttpError(400, "email obbligatoria.", {
+      email: "L'email e obbligatoria per creare l'Area Riservata.",
+    });
+  }
+
+  if (!existingUser && !String(password || "").trim()) {
+    throw createHttpError(400, "password obbligatoria.", {
+      reserved_password:
+        "La password temporanea e obbligatoria per creare l'Area Riservata.",
+    });
+  }
+
+  const payload = {
+    professional_id: professional.id,
+    first_name: professional.first_name,
+    last_name: professional.last_name,
+    email: effectiveEmail,
+    display_name: professional.display_name,
+    specializzazione: professional.specializzazione,
+    active,
+  };
+
+  if (existingUser) {
+    return updateUser(existingUser.id, {
+      ...payload,
+      role: existingUser.role,
+      assignedTypes: existingUser.assignedTypes,
+      must_change_password:
+        password ? true : existingUser.must_change_password,
+      ...(password ? { password } : {}),
+    });
+  }
+
+  return createUser({
+    ...payload,
+    role: "professionista",
+    password,
+    must_change_password: mustChangePassword,
+  });
+}
+
 export function listRefertatoriByType(tipoReferto) {
   const db = getDb();
   const rows = db
@@ -530,7 +616,7 @@ function normalizeUserPayload(payload, requirePassword) {
     payload?.professional_id || payload?.professionalId,
   );
 
-  if (role !== "admin" && role !== "refertatore") {
+  if (role !== "admin" && role !== "refertatore" && role !== "professionista") {
     throw createHttpError(400, "role non valido.");
   }
 
@@ -547,14 +633,14 @@ function normalizeUserPayload(payload, requirePassword) {
   }
 
   let professional = null;
-  if (role === "refertatore") {
+  if (role === "refertatore" || role === "professionista") {
     if (!professionalId) {
       throw createHttpError(
         400,
-        "Seleziona un professionista esistente per creare il refertatore.",
+        "Seleziona un professionista esistente per creare l'utente area riservata.",
         {
           professional_id:
-            "Seleziona un professionista esistente per creare il refertatore.",
+            "Seleziona un professionista esistente per creare l'utente area riservata.",
         },
       );
     }
@@ -567,7 +653,10 @@ function normalizeUserPayload(payload, requirePassword) {
       });
     }
 
-    if (!isCompatibleRefertatoreSpecialization(professional.specializzazione)) {
+    if (
+      role === "refertatore" &&
+      !isCompatibleRefertatoreSpecialization(professional.specializzazione)
+    ) {
       throw createHttpError(
         400,
         "Il professionista selezionato non puo essere configurato come refertatore per specializzazione non compatibile.",
@@ -578,7 +667,7 @@ function normalizeUserPayload(payload, requirePassword) {
       );
     }
 
-    if (assignedTypes.length === 0) {
+    if (role === "refertatore" && assignedTypes.length === 0) {
       throw createHttpError(
         400,
         "Assegna almeno una tipologia EMG o PSG al refertatore.",
@@ -693,6 +782,8 @@ function mapUserRow(row) {
     avatar_data_url: buildAvatarDataUrl(row.avatar_path, row.avatar_mime_type),
     active: !!row.active,
     must_change_password: !!row.must_change_password,
+    two_factor_enabled: !!row.two_factor_enabled,
+    two_factor_confirmed_at: row.two_factor_confirmed_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     last_login_at: row.last_login_at,
@@ -752,3 +843,4 @@ function buildAvatarDataUrl(storagePath, mimeType) {
     return null;
   }
 }
+

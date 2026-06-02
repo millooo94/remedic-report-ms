@@ -7,7 +7,7 @@ import {
   PSG_ATTACHMENT_KINDS,
 } from "../constants/drafts.js";
 import { env } from "../config/env.js";
-import { getDb, resolveUploadsRoot } from "../db/sqlite.js";
+import { getDb, resolveUploadsRoot } from "../db/mysql.js";
 import { uploadSignedPdfToDrive } from "./pdf.service.js";
 import { sendSignedPdfNotificationEmail } from "./email.service.js";
 
@@ -733,3 +733,4 @@ function cleanupDirectoriesUpward(startDir, stopDir) {
     currentDir = path.dirname(currentDir);
   }
 }
+

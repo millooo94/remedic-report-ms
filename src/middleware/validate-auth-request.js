@@ -86,3 +86,50 @@ export function validateProfileAvatarRequest(req, res, next) {
 
   next();
 }
+
+export function validateTwoFactorSetupRequest(req, res, next) {
+  const challengeToken = normalizeText(req.body?.challengeToken);
+  if (!challengeToken) {
+    return res.status(400).json({
+      error: "Challenge 2FA mancante.",
+      fieldErrors: {
+        challengeToken: "Sessione di configurazione 2FA non valida.",
+      },
+    });
+  }
+  next();
+}
+
+export function validateTwoFactorCodeRequest(req, res, next) {
+  const challengeToken = normalizeText(req.body?.challengeToken);
+  const code = normalizeText(req.body?.code);
+
+  if (!challengeToken || !code) {
+    return res.status(400).json({
+      error: "Challenge e codice 2FA sono obbligatori.",
+      fieldErrors: {
+        ...(challengeToken ? {} : { challengeToken: "Sessione 2FA non valida." }),
+        ...(code ? {} : { code: "Inserisci il codice di autenticazione." }),
+      },
+    });
+  }
+
+  next();
+}
+
+export function validateTwoFactorRecoveryCodeRequest(req, res, next) {
+  const challengeToken = normalizeText(req.body?.challengeToken);
+  const recoveryCode = normalizeText(req.body?.recoveryCode);
+
+  if (!challengeToken || !recoveryCode) {
+    return res.status(400).json({
+      error: "Challenge e codice di recupero sono obbligatori.",
+      fieldErrors: {
+        ...(challengeToken ? {} : { challengeToken: "Sessione 2FA non valida." }),
+        ...(recoveryCode ? {} : { recoveryCode: "Inserisci un codice di recupero valido." }),
+      },
+    });
+  }
+
+  next();
+}

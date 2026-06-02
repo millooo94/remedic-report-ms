@@ -1,7 +1,9 @@
 import {
   assertRefertatoreDraftReadyForSignature,
   completeRefertatoreDraft,
+  getReservedArchiveDraftById,
   getRefertatoreDraftById,
+  listReservedPersonalArchive,
   listRefertatoreArchive,
   listRefertatoreDrafts,
   updateRefertatoreDraft,
@@ -36,6 +38,9 @@ export function meRefertatoreController(req, res) {
 
 export function listRefertatoreDraftsController(req, res) {
   try {
+    if (req.authUser?.role !== "refertatore") {
+      return res.json({ items: [] });
+    }
     const tipoReferto = normalizeReportType(req.query?.tipo_referto);
     return res.json({
       items: listRefertatoreDrafts(req.authUser.id, tipoReferto),
@@ -47,6 +52,9 @@ export function listRefertatoreDraftsController(req, res) {
 
 export function listRefertatoreArchiveController(req, res) {
   try {
+    if (req.authUser?.role !== "refertatore") {
+      return res.json({ items: [] });
+    }
     const tipoReferto = normalizeReportType(req.query?.tipo_referto);
     return res.json({
       items: listRefertatoreArchive(req.authUser.id, tipoReferto),
@@ -56,11 +64,30 @@ export function listRefertatoreArchiveController(req, res) {
   }
 }
 
+export function listReservedPersonalArchiveController(req, res) {
+  try {
+    const tipoReferto = String(req.query?.tipo_referto || "").trim().toLowerCase();
+    return res.json({
+      items: listReservedPersonalArchive(req.authUser, tipoReferto),
+    });
+  } catch (error) {
+    return handleError(res, error, "Errore interno nel caricamento archivio personale.");
+  }
+}
+
 export function getRefertatoreDraftController(req, res) {
   try {
     return res.json(getRefertatoreDraftById(req.authUser.id, req.params.id));
   } catch (error) {
     return handleError(res, error, "Errore interno nell'apertura referto assegnato.");
+  }
+}
+
+export function getReservedArchiveDraftController(req, res) {
+  try {
+    return res.json(getReservedArchiveDraftById(req.authUser, req.params.id));
+  } catch (error) {
+    return handleError(res, error, "Errore interno nell'apertura del referto archiviato.");
   }
 }
 

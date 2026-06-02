@@ -176,6 +176,106 @@ export async function sendSignedReportToPatient({
   return sent;
 }
 
+export async function sendTwoFactorEnabledEmail({
+  email,
+  displayName,
+}) {
+  if (!(await canSendEmail())) {
+    return { sent: false, reason: "smtp_not_configured" };
+  }
+
+  const intro =
+    "L'autenticazione a due fattori e stata attivata correttamente per il tuo account Remedic.";
+
+  return safeSendMail({
+    from: env.smtpFrom,
+    to: email,
+    subject: "Autenticazione a due fattori attivata - Remedic",
+    text: [
+      `Gentile ${displayName || "utente"},`,
+      "",
+      intro,
+      "Se non riconosci questa operazione, contatta subito l'assistenza Remedic.",
+    ].join("\n"),
+    html: buildBrandedEmailHtml({
+      eyebrow: "Sicurezza account",
+      title: "Autenticazione a due fattori attivata",
+      greeting: `Gentile ${displayName || "utente"},`,
+      intro,
+      lines: [
+        "Da questo momento per accedere all'Area Riservata sara richiesto anche il codice generato dalla tua app Authenticator.",
+        "Se non riconosci questa operazione, contatta subito l'assistenza Remedic.",
+      ],
+    }),
+  });
+}
+
+export async function sendRecoveryCodeUsedEmail({
+  email,
+  displayName,
+}) {
+  if (!(await canSendEmail())) {
+    return { sent: false, reason: "smtp_not_configured" };
+  }
+
+  const intro =
+    "E stato utilizzato un codice di recupero per accedere alla tua Area Riservata Remedic.";
+
+  return safeSendMail({
+    from: env.smtpFrom,
+    to: email,
+    subject: "Codice di recupero 2FA utilizzato - Remedic",
+    text: [
+      `Gentile ${displayName || "utente"},`,
+      "",
+      intro,
+      "Se non sei stato tu, cambia subito la password e contatta l'assistenza Remedic.",
+    ].join("\n"),
+    html: buildBrandedEmailHtml({
+      eyebrow: "Sicurezza account",
+      title: "Codice di recupero utilizzato",
+      greeting: `Gentile ${displayName || "utente"},`,
+      intro,
+      lines: [
+        "Se non sei stato tu, cambia subito la password e contatta l'assistenza Remedic.",
+      ],
+    }),
+  });
+}
+
+export async function sendPasswordChangedSecurityEmail({
+  email,
+  displayName,
+}) {
+  if (!(await canSendEmail())) {
+    return { sent: false, reason: "smtp_not_configured" };
+  }
+
+  const intro =
+    "La password del tuo account Remedic e stata aggiornata correttamente.";
+
+  return safeSendMail({
+    from: env.smtpFrom,
+    to: email,
+    subject: "Password aggiornata - Remedic",
+    text: [
+      `Gentile ${displayName || "utente"},`,
+      "",
+      intro,
+      "Se non riconosci questa operazione, contatta subito l'assistenza Remedic.",
+    ].join("\n"),
+    html: buildBrandedEmailHtml({
+      eyebrow: "Sicurezza account",
+      title: "Password aggiornata",
+      greeting: `Gentile ${displayName || "utente"},`,
+      intro,
+      lines: [
+        "Se non riconosci questa operazione, contatta subito l'assistenza Remedic.",
+      ],
+    }),
+  });
+}
+
 function buildBrandedEmailHtml({
   eyebrow,
   title,

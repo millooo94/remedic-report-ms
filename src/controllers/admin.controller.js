@@ -24,7 +24,7 @@ import {
   createDraftEmailDelivery,
   listDraftEmailDeliveries,
 } from "../services/draft-email-deliveries.service.js";
-import { resolveUploadsRoot } from "../db/sqlite.js";
+import { resolveUploadsRoot } from "../db/mysql.js";
 
 function handleError(res, error, fallbackMessage) {
   const status = Number(error?.status || 500);
@@ -436,3 +436,4 @@ function maskEmail(email) {
       : `${local.slice(0, 2)}***${local.slice(-1)}`;
   return `${safeLocal}@${domain}`;
 }
+
