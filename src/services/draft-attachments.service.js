@@ -30,9 +30,12 @@ const MAX_SIGNATURE_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_SIGNED_PDF_BYTES = 30 * 1024 * 1024;
 const MAX_PSG_REPORT_BYTES = 30 * 1024 * 1024;
 
-function createHttpError(status, message) {
+function createHttpError(status, message, fieldErrors = null) {
   const error = new Error(message);
   error.status = status;
+  if (fieldErrors && typeof fieldErrors === "object") {
+    error.fieldErrors = fieldErrors;
+  }
   return error;
 }
 
@@ -54,6 +57,10 @@ export function saveDraftAttachment(draftId, payload) {
     throw createHttpError(
       400,
       `Mime type non supportato per ${attachment.kind}.`,
+      attachment.kind === EMG_ATTACHMENT_KINDS.SIGNED_PDF ||
+        attachment.kind === PSG_ATTACHMENT_KINDS.SIGNED_PDF
+        ? { pdf: "Il file selezionato deve essere un PDF valido." }
+        : null,
     );
   }
 
@@ -61,6 +68,10 @@ export function saveDraftAttachment(draftId, payload) {
     throw createHttpError(
       400,
       `Il file ${attachment.fileName} supera la dimensione massima consentita.`,
+      attachment.kind === EMG_ATTACHMENT_KINDS.SIGNED_PDF ||
+        attachment.kind === PSG_ATTACHMENT_KINDS.SIGNED_PDF
+        ? { pdf: "Il PDF firmato supera la dimensione massima consentita." }
+        : null,
     );
   }
 
@@ -166,6 +177,16 @@ export async function saveSignedDraftPdfAndUpload(draftId, payload) {
     );
   }
 
+  if (draft.stato !== "pronto_per_firma") {
+    throw createHttpError(
+      409,
+      "Il PDF firmato puo essere caricato solo per referti pronti per firma.",
+      {
+        pdf: "Il PDF firmato puo essere caricato solo per referti pronti per firma.",
+      },
+    );
+  }
+
   const kind =
     draft.tipo_referto === "emg"
       ? EMG_ATTACHMENT_KINDS.SIGNED_PDF
@@ -177,12 +198,58 @@ export async function saveSignedDraftPdfAndUpload(draftId, payload) {
     mimeType: payload.mimeType,
     base64: payload.base64,
   });
+  const updatedDraft = setDraftStatus(draftId, "firmato_caricato");
+
+  return {
+    draft: updatedDraft,
+    attachment: getAttachmentMetadataById(draftId, attachment.id),
+    drive: null,
+    notification: {
+      sent: false,
+      reason: "admin_drive_archive_required",
+    },
+  };
+}
+
+export async function archiveExistingSignedDraftPdfToDrive(draftId) {
+  const draft = getDraftRowForAttachments(draftId);
+
+  if (draft.tipo_referto !== "emg" && draft.tipo_referto !== "psg") {
+    throw createHttpError(
+      409,
+      "Il salvataggio su Drive e disponibile solo per i referti asincroni firmati.",
+    );
+  }
+
+  const attachment = getSignedDraftAttachmentForDraft(draftId);
+
+  if (!attachment) {
+    throw createHttpError(404, "PDF firmato non disponibile per questo referto.");
+  }
+
+  if (attachment.drive_file_id || attachment.drive_web_view_link) {
+    return {
+      draft: setDraftStatus(draftId, draft.stato === "completato" ? "completato" : "firmato_caricato"),
+      attachment,
+      drive: {
+        fileName: attachment.original_name || attachment.file_name,
+        specializzazione:
+          draft.assigned_refertatore_specializzazione || draft.specializzazione || "",
+        medico:
+          draft.assigned_refertatore_name || draft.medico_refertatore || "",
+        pazienteFolder: null,
+        driveFileId: attachment.drive_file_id || null,
+        driveWebViewLink: attachment.drive_web_view_link || null,
+      },
+      alreadySaved: true,
+    };
+  }
+
   const { buffer } = getDraftAttachmentContent(draftId, attachment.id);
   const driveContext = buildDriveContextFromDraft(draft);
   const driveInfo = await uploadSignedPdfToDrive(driveContext, buffer);
   persistAttachmentDriveMetadata(draftId, attachment.id, driveInfo);
-  const updatedDraft = setDraftStatus(draftId, "completato");
-  await sendSignedPdfNotificationEmail({
+  const notification = await sendSignedPdfNotificationEmail({
     reportType: draft.tipo_referto,
     patientName:
       draft.paziente_nome_completo ||
@@ -193,9 +260,11 @@ export async function saveSignedDraftPdfAndUpload(draftId, payload) {
   });
 
   return {
-    draft: updatedDraft,
+    draft: setDraftStatus(draftId, "completato"),
     attachment: getAttachmentMetadataById(draftId, attachment.id),
     drive: driveInfo,
+    alreadySaved: false,
+    notification,
   };
 }
 

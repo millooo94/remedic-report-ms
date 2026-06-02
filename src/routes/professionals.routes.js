@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   createProfessionalController,
+  deleteProfessionalController,
   getProfessionalController,
   listAdminProfessionalsController,
   listOperationalProfessionalsController,
@@ -22,5 +23,6 @@ router.get("/admin/professionals", requireAuth, requireRole("admin"), listAdminP
 router.post("/admin/professionals", requireAuth, requireRole("admin"), requireCsrf, createProfessionalController);
 router.put("/admin/professionals/:id", requireAuth, requireRole("admin"), requireCsrf, updateProfessionalController);
 router.patch("/admin/professionals/:id/status", requireAuth, requireRole("admin"), requireCsrf, updateProfessionalStatusController);
+router.delete("/admin/professionals/:id", requireAuth, requireRole("admin"), requireCsrf, deleteProfessionalController);
 
 export default router;

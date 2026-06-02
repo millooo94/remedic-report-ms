@@ -1,15 +1,21 @@
 import { Router } from "express";
 import {
+  changePasswordController,
   csrfController,
   forgotPasswordController,
   loginController,
   logoutController,
   meController,
   resetPasswordController,
+  updateProfileController,
+  uploadProfileAvatarController,
 } from "../controllers/auth.controller.js";
 import {
+  validateChangePasswordRequest,
   validateForgotPasswordRequest,
   validateLoginRequest,
+  validateProfileAvatarRequest,
+  validateProfileUpdateRequest,
   validateResetPasswordRequest,
 } from "../middleware/validate-auth-request.js";
 import { requireAuth } from "../middleware/require-auth.js";
@@ -44,6 +50,15 @@ router.post("/auth/forgot-password", forgotRateLimit, validateForgotPasswordRequ
 router.post("/auth/reset-password", resetRateLimit, validateResetPasswordRequest, resetPasswordController);
 router.get("/auth/me", requireAuth, meController);
 router.get("/auth/csrf", requireAuth, csrfController);
+router.put("/auth/profile", requireAuth, requireCsrf, validateProfileUpdateRequest, updateProfileController);
+router.post("/auth/profile/avatar", requireAuth, requireCsrf, validateProfileAvatarRequest, uploadProfileAvatarController);
 router.post("/auth/logout", requireAuth, requireCsrf, logoutController);
+router.post(
+  "/auth/change-password",
+  requireAuth,
+  requireCsrf,
+  validateChangePasswordRequest,
+  changePasswordController,
+);
 
 export default router;

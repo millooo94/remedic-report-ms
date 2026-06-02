@@ -2,10 +2,17 @@ import crypto from "node:crypto";
 import { deleteAllDraftAttachments, listDraftAttachments } from "./draft-attachments.service.js";
 import { getDb } from "../db/sqlite.js";
 import { sendDraftAssignedEmail } from "./email.service.js";
+import { LEGACY_DRAFT_STATUS_MAP } from "../constants/drafts.js";
 
 function createHttpError(status, message) {
   const error = new Error(message);
   error.status = status;
+  return error;
+}
+
+function createFieldError(status, message, fieldErrors = {}) {
+  const error = createHttpError(status, message);
+  error.fieldErrors = fieldErrors;
   return error;
 }
 
@@ -54,6 +61,79 @@ function normalizeSummary(summary = {}, tipoReferto = "standard") {
   };
 }
 
+function normalizeDraftStatus(status) {
+  const normalized = String(status || "").trim();
+  return LEGACY_DRAFT_STATUS_MAP[normalized] || normalized;
+}
+
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isMeaningfulRichText(value) {
+  return stripHtml(value).length > 0;
+}
+
+function validateReviewerCompletion(draft) {
+  const form = draft?.form_data?.form ?? {};
+
+  if (draft.tipo_referto === "emg") {
+    const emg = form.emg ?? {};
+    const fieldErrors = {};
+
+    if (!isMeaningfulRichText(emg.repertiElettrofisiologici)) {
+      fieldErrors.repertiElettrofisiologici =
+        "Compila i Reperti elettrofisiologici prima di completare il referto.";
+    }
+
+    if (!isMeaningfulRichText(emg.conclusioni)) {
+      fieldErrors.conclusioni =
+        "Compila le Conclusioni prima di completare il referto.";
+    }
+
+    if (Object.keys(fieldErrors).length) {
+      throw createFieldError(
+        400,
+        "Completa i campi del refertatore prima di procedere.",
+        fieldErrors,
+      );
+    }
+
+    return;
+  }
+
+  if (draft.tipo_referto === "psg") {
+    const psg = form.psg ?? {};
+    const fieldErrors = {};
+
+    if (!isMeaningfulRichText(psg.interpretazioneMedico)) {
+      fieldErrors.interpretazioneMedico =
+        "Compila l'Interpretazione medico prima di completare il referto.";
+    }
+
+    if (!isMeaningfulRichText(psg.conclusioneDiagnostica)) {
+      fieldErrors.conclusioneDiagnostica =
+        "Compila la Conclusione diagnostica prima di completare il referto.";
+    }
+
+    if (!isMeaningfulRichText(psg.indicazioniCliniche)) {
+      fieldErrors.indicazioniCliniche =
+        "Compila le Indicazioni cliniche prima di completare il referto.";
+    }
+
+    if (Object.keys(fieldErrors).length) {
+      throw createFieldError(
+        400,
+        "Completa i campi clinici PSG prima di procedere.",
+        fieldErrors,
+      );
+    }
+  }
+}
+
 function parseDraftRow(row) {
   if (!row) {
     return null;
@@ -62,7 +142,7 @@ function parseDraftRow(row) {
   return {
     id: row.id,
     tipo_referto: row.tipo_referto,
-    stato: row.stato,
+    stato: normalizeDraftStatus(row.stato),
     summary: {
       paziente_nome: row.paziente_nome,
       paziente_cognome: row.paziente_cognome,
@@ -94,7 +174,7 @@ function toDraftSummary(row) {
   return {
     id: row.id,
     tipo_referto: row.tipo_referto,
-    stato: row.stato,
+    stato: normalizeDraftStatus(row.stato),
     paziente_nome: row.paziente_nome,
     paziente_cognome: row.paziente_cognome,
     paziente_nome_completo: row.paziente_nome_completo,
@@ -111,6 +191,10 @@ function toDraftSummary(row) {
     specializzazione: row.specializzazione,
     prestazione: row.prestazione,
     data_esame: row.data_esame,
+    has_signed_pdf: !!row.has_signed_pdf,
+    patient_email_sent: !!row.patient_email_sent,
+    drive_file_id: row.drive_file_id || null,
+    drive_web_view_link: row.drive_web_view_link || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     completed_at: row.completed_at,
@@ -182,13 +266,13 @@ export function createDraft(payload) {
   ).run({
     id,
     tipo_referto: payload.tipo_referto,
-    stato: payload.stato,
+    stato: normalizeDraftStatus(payload.stato),
     ...summary,
     form_data_json: formDataJson,
     schema_version: schemaVersion,
     created_at: now,
     updated_at: now,
-    completed_at: payload.stato === "completato" ? now : null,
+    completed_at: normalizeDraftStatus(payload.stato) === "completato" ? now : null,
   });
 
   return getDraftById(id);
@@ -209,11 +293,16 @@ export function listDrafts(filters = {}) {
     clauses.push("stato NOT IN ('completato', 'firmato_caricato')");
   } else if (scope === "archive") {
     clauses.push("stato IN ('completato', 'firmato_caricato')");
+    if (filters.include_hidden_admin !== "1") {
+      clauses.push(
+        "COALESCE(json_extract(form_data_json, '$.meta.hiddenFromAdminArchive'), 0) = 0",
+      );
+    }
   }
 
   if (filters.stato) {
     clauses.push("stato = @stato");
-    params.stato = filters.stato;
+    params.stato = normalizeDraftStatus(filters.stato);
   }
 
   if (filters.q) {
@@ -254,6 +343,40 @@ export function listDrafts(filters = {}) {
           specializzazione,
           prestazione,
           data_esame,
+          EXISTS (
+            SELECT 1
+            FROM draft_attachments a
+            WHERE a.draft_id = report_drafts.id
+              AND a.kind IN ('emg_pdf_firmato', 'psg_pdf_firmato')
+          ) AS has_signed_pdf,
+          EXISTS (
+            SELECT 1
+            FROM draft_email_deliveries d
+            WHERE d.draft_id = report_drafts.id
+              AND d.status = 'sent'
+          ) AS patient_email_sent,
+          COALESCE(
+            (
+              SELECT a.drive_file_id
+              FROM draft_attachments a
+              WHERE a.draft_id = report_drafts.id
+                AND a.kind IN ('emg_pdf_firmato', 'psg_pdf_firmato')
+              ORDER BY a.created_at DESC
+              LIMIT 1
+            ),
+            json_extract(form_data_json, '$.meta.driveFileId')
+          ) AS drive_file_id,
+          COALESCE(
+            (
+              SELECT a.drive_web_view_link
+              FROM draft_attachments a
+              WHERE a.draft_id = report_drafts.id
+                AND a.kind IN ('emg_pdf_firmato', 'psg_pdf_firmato')
+              ORDER BY a.created_at DESC
+              LIMIT 1
+            ),
+            json_extract(form_data_json, '$.meta.driveWebViewLink')
+          ) AS drive_web_view_link,
           created_at,
           updated_at,
           completed_at
@@ -329,12 +452,12 @@ export function updateDraft(id, payload) {
   ).run({
     id,
     tipo_referto: payload.tipo_referto,
-    stato: payload.stato,
+    stato: normalizeDraftStatus(payload.stato),
     ...summary,
     form_data_json: formDataJson,
     schema_version: schemaVersion,
     updated_at: now,
-    completed_at: payload.stato === "completato" ? now : null,
+    completed_at: normalizeDraftStatus(payload.stato) === "completato" ? now : null,
   });
 
   return getDraftById(id);
@@ -345,6 +468,7 @@ export function updateDraftStatus(id, stato) {
 
   const db = getDb();
   const now = new Date().toISOString();
+  const normalizedStatus = normalizeDraftStatus(stato);
 
   db.prepare(
     `
@@ -357,9 +481,9 @@ export function updateDraftStatus(id, stato) {
     `,
   ).run({
     id,
-    stato,
+    stato: normalizedStatus,
     updated_at: now,
-    completed_at: stato === "completato" ? now : null,
+    completed_at: normalizedStatus === "completato" ? now : null,
   });
 
   return getDraftById(id);
@@ -385,6 +509,31 @@ export function deleteDraft(id) {
   }
 }
 
+export function hideDraftFromAdminArchive(id) {
+  const draft = getDraftById(id);
+
+  if (draft.stato !== "completato" && draft.stato !== "firmato_caricato") {
+    throw createHttpError(
+      409,
+      "Solo i referti archiviati possono essere nascosti dall'archivio admin.",
+    );
+  }
+
+  const nextMeta = structuredClone(draft.form_data?.meta ?? {});
+  nextMeta.hiddenFromAdminArchive = true;
+
+  return updateDraft(id, {
+    tipo_referto: draft.tipo_referto,
+    stato: draft.stato,
+    summary: draft.summary,
+    form_data: {
+      form: draft.form_data?.form ?? {},
+      sections: draft.form_data?.sections ?? {},
+      meta: nextMeta,
+    },
+  });
+}
+
 export async function sendDraftToAssignedRefertatore(id) {
   const draft = getDraftById(id);
   const assignedEmail = draft.summary.assigned_refertatore_email;
@@ -397,8 +546,7 @@ export async function sendDraftToAssignedRefertatore(id) {
     );
   }
 
-  const nextStatus =
-    draft.tipo_referto === "emg" ? "in_attesa_neurologo" : "in_refertazione";
+  const nextStatus = "in_attesa_refertatore";
   const nextMeta = {
     ...(draft.form_data?.meta ?? {}),
     sentToRefertatore: true,
@@ -442,11 +590,11 @@ export async function sendDraftToAssignedRefertatore(id) {
   };
 }
 
-export function listNeurologistEmgDrafts() {
+export function listRefertatoreEmgDrafts() {
   return listRefertatoreDraftsLegacy("emg");
 }
 
-export function getNeurologistEmgDraftById(id) {
+export function getRefertatoreEmgDraftById(id) {
   const draft = getDraftById(id);
 
   if (draft.tipo_referto !== "emg") {
@@ -454,17 +602,17 @@ export function getNeurologistEmgDraftById(id) {
   }
 
   if (
-    draft.stato !== "in_attesa_neurologo" &&
-    draft.stato !== "in_refertazione_neurologo" &&
+    draft.stato !== "in_attesa_refertatore" &&
+    draft.stato !== "in_refertazione_refertatore" &&
     draft.stato !== "pronto_per_firma" &&
     draft.stato !== "completato"
   ) {
-    throw createHttpError(404, "Bozza EMG non disponibile per l'area neurologo.");
+    throw createHttpError(404, "Bozza EMG non disponibile per l'area refertatore.");
   }
 
-  if (draft.stato === "in_attesa_neurologo") {
-    updateDraftStatus(id, "in_refertazione_neurologo");
-    return getNeurologistEmgDraftById(id);
+  if (draft.stato === "in_attesa_refertatore") {
+    updateDraftStatus(id, "in_refertazione_refertatore");
+    return getRefertatoreEmgDraftById(id);
   }
 
   return {
@@ -473,7 +621,7 @@ export function getNeurologistEmgDraftById(id) {
   };
 }
 
-export function updateNeurologistEmgDraft(id, payload) {
+export function updateRefertatoreEmgDraft(id, payload) {
   const currentDraft = getDraftById(id);
 
   if (currentDraft.tipo_referto !== "emg") {
@@ -493,12 +641,12 @@ export function updateNeurologistEmgDraft(id, payload) {
     conclusioni: normalizeNullableString(incomingEmg.conclusioni) || "",
   };
   nextMeta.currentStep = Number(payload?.form_data?.meta?.currentStep || nextMeta.currentStep || 3);
-  nextMeta.draftStatus = "in_refertazione_neurologo";
+  nextMeta.draftStatus = "in_refertazione_refertatore";
   nextMeta.schemaVersion = Number(nextMeta.schemaVersion || 1);
 
   return updateDraft(id, {
     tipo_referto: "emg",
-    stato: "in_refertazione_neurologo",
+    stato: "in_refertazione_refertatore",
     summary: normalizeSummary(payload?.summary ?? currentDraft.summary, "emg"),
     form_data: {
       form: nextForm,
@@ -521,10 +669,12 @@ export function listRefertatoreDrafts(userId, tipoReferto) {
 
   if (tipoReferto === "emg") {
     clauses.push(
-      "stato IN ('in_attesa_neurologo', 'in_refertazione_neurologo', 'pronto_per_firma')",
+      "stato IN ('in_attesa_refertatore', 'in_refertazione_refertatore', 'pronto_per_firma')",
     );
   } else if (tipoReferto === "psg") {
-    clauses.push("stato IN ('in_refertazione', 'pronto_per_firma')");
+    clauses.push(
+      "stato IN ('in_attesa_refertatore', 'in_refertazione_refertatore', 'pronto_per_firma')",
+    );
     clauses.push(
       "COALESCE(json_extract(form_data_json, '$.meta.sentToRefertatore'), 0) = 1",
     );
@@ -620,8 +770,11 @@ export function getRefertatoreDraftById(userId, id) {
     throw createHttpError(404, "Bozza PSG non ancora inviata al refertatore.");
   }
 
-  if (draft.tipo_referto === "emg" && draft.stato === "in_attesa_neurologo") {
-    updateDraftStatus(id, "in_refertazione_neurologo");
+  if (
+    (draft.tipo_referto === "emg" || draft.tipo_referto === "psg") &&
+    draft.stato === "in_attesa_refertatore"
+  ) {
+    updateDraftStatus(id, "in_refertazione_refertatore");
     return getRefertatoreDraftById(userId, id);
   }
 
@@ -647,11 +800,11 @@ export function updateRefertatoreDraft(userId, id, payload) {
       conclusioni: normalizeNullableString(incomingEmg.conclusioni) || "",
     };
     nextMeta.currentStep = Number(payload?.form_data?.meta?.currentStep || 3);
-    nextMeta.draftStatus = "in_refertazione_neurologo";
+    nextMeta.draftStatus = "in_refertazione_refertatore";
 
     return updateDraft(id, {
       tipo_referto: "emg",
-      stato: "in_refertazione_neurologo",
+      stato: "in_refertazione_refertatore",
       summary: currentDraft.summary,
       form_data: {
         form: nextForm,
@@ -675,11 +828,14 @@ export function updateRefertatoreDraft(userId, id, payload) {
         normalizeNullableString(incomingPsg.notaDocumentale) || "",
     };
     nextMeta.currentStep = Number(payload?.form_data?.meta?.currentStep || 3);
-    nextMeta.draftStatus = "in_refertazione";
+    nextMeta.draftStatus = "in_refertazione_refertatore";
 
     return updateDraft(id, {
       tipo_referto: "psg",
-      stato: currentDraft.stato === "completato" ? "completato" : "in_refertazione",
+      stato:
+        currentDraft.stato === "completato"
+          ? "completato"
+          : "in_refertazione_refertatore",
       summary: currentDraft.summary,
       form_data: {
         form: nextForm,
@@ -690,6 +846,38 @@ export function updateRefertatoreDraft(userId, id, payload) {
   }
 
   throw createHttpError(400, "Tipo referto non gestito in area refertatore.");
+}
+
+export function completeRefertatoreDraft(userId, id, payload) {
+  const updatedDraft = updateRefertatoreDraft(userId, id, payload);
+  validateReviewerCompletion(updatedDraft);
+  const nextMeta = structuredClone(updatedDraft.form_data?.meta ?? {});
+  nextMeta.draftStatus = "pronto_per_firma";
+
+  return updateDraft(id, {
+    tipo_referto: updatedDraft.tipo_referto,
+    stato: "pronto_per_firma",
+    summary: updatedDraft.summary,
+    form_data: {
+      form: updatedDraft.form_data?.form ?? {},
+      sections: updatedDraft.form_data?.sections ?? {},
+      meta: nextMeta,
+    },
+  });
+}
+
+export function assertRefertatoreDraftReadyForSignature(userId, id) {
+  const draft = getRefertatoreDraftById(userId, id);
+
+  if (draft.stato !== "pronto_per_firma") {
+    throw createHttpError(
+      409,
+      "Completa prima il referto prima di esportare o caricare il PDF firmato.",
+    );
+  }
+
+  validateReviewerCompletion(draft);
+  return draft;
 }
 
 function listRefertatoreDraftsLegacy(tipoReferto) {
@@ -711,7 +899,7 @@ function listRefertatoreDraftsLegacy(tipoReferto) {
         LEFT JOIN draft_attachments a
           ON a.draft_id = d.id
         WHERE d.tipo_referto = @tipo_referto
-          AND d.stato IN ('in_attesa_neurologo', 'in_refertazione_neurologo', 'pronto_per_firma')
+          AND d.stato IN ('in_attesa_refertatore', 'in_refertazione_refertatore', 'pronto_per_firma')
         GROUP BY
           d.id,
           d.stato,

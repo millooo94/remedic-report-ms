@@ -2,7 +2,13 @@ import { generatePdfPreview, generatePdfPrintPage } from "../services/pdf.servic
 
 export async function generatePdfController(req, res) {
   try {
-    const htmlPage = await generatePdfPrintPage(req.body);
+    const { htmlPage, drive } = await generatePdfPrintPage(req.body);
+    if (drive?.driveFileId) {
+      res.setHeader("x-remedic-drive-file-id", drive.driveFileId);
+    }
+    if (drive?.driveWebViewLink) {
+      res.setHeader("x-remedic-drive-link", drive.driveWebViewLink);
+    }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(htmlPage);
   } catch (err) {

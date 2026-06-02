@@ -1,4 +1,6 @@
 import {
+  assertRefertatoreDraftReadyForSignature,
+  completeRefertatoreDraft,
   getRefertatoreDraftById,
   listRefertatoreArchive,
   listRefertatoreDrafts,
@@ -14,7 +16,10 @@ function handleError(res, error, fallbackMessage) {
     console.error("Refertatore error:", error?.message || error);
   }
 
-  return res.status(status).json({ error: message });
+  return res.status(status).json({
+    error: message,
+    ...(error?.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+  });
 }
 
 function normalizeReportType(value) {
@@ -67,7 +72,35 @@ export function updateRefertatoreDraftController(req, res) {
   }
 }
 
+export function completeRefertatoreDraftController(req, res) {
+  try {
+    const draft = completeRefertatoreDraft(req.authUser.id, req.params.id, req.body);
+    createAuditLog({
+      userId: req.authUser?.id,
+      role: req.authUser?.role,
+      action: AUDIT_ACTIONS.REFERTATORE_DRAFT_COMPLETED,
+      entityType: "draft",
+      entityId: req.params.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: {
+        stato: draft.stato,
+        tipo_referto: draft.tipo_referto,
+      },
+    });
+    return res.json(draft);
+  } catch (error) {
+    return handleError(res, error, "Errore interno nel completamento referto assegnato.");
+  }
+}
+
 export function exportPreviewRefertatoreDraftController(req, res) {
+  try {
+    assertRefertatoreDraftReadyForSignature(req.authUser.id, req.params.id);
+  } catch (error) {
+    return handleError(res, error, "Errore interno nell'export temporaneo del referto.");
+  }
+
   createAuditLog({
     userId: req.authUser?.id,
     role: req.authUser?.role,

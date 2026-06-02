@@ -1,15 +1,24 @@
 import crypto from "node:crypto";
 import { getDb } from "../db/sqlite.js";
+import { normalizeProfessionalSpecialization } from "../constants/professional-taxonomy.js";
 
-function createHttpError(status, message) {
+function createHttpError(status, message, fieldErrors = null) {
   const error = new Error(message);
   error.status = status;
+  if (fieldErrors && typeof fieldErrors === "object") {
+    error.fieldErrors = fieldErrors;
+  }
   return error;
 }
 
-export function listProfessionals({ activeOnly = true, visibleInStandardOnly = false } = {}) {
+export function listProfessionals({
+  activeOnly = true,
+  visibleInStandardOnly = false,
+  q = "",
+} = {}) {
   const db = getDb();
   const clauses = [];
+  const params = {};
 
   if (activeOnly) {
     clauses.push("active = 1");
@@ -17,6 +26,19 @@ export function listProfessionals({ activeOnly = true, visibleInStandardOnly = f
 
   if (visibleInStandardOnly) {
     clauses.push("visible_in_standard = 1");
+  }
+
+  if (String(q || "").trim()) {
+    clauses.push(`
+      (
+        LOWER(COALESCE(first_name, '')) LIKE @query OR
+        LOWER(COALESCE(last_name, '')) LIKE @query OR
+        LOWER(display_name) LIKE @query OR
+        LOWER(COALESCE(specializzazione, '')) LIKE @query OR
+        LOWER(COALESCE(email, '')) LIKE @query
+      )
+    `);
+    params.query = `%${String(q).trim().toLowerCase()}%`;
   }
 
   const whereClause = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -29,7 +51,7 @@ export function listProfessionals({ activeOnly = true, visibleInStandardOnly = f
         ORDER BY sort_order ASC, display_name ASC
       `,
     )
-    .all();
+    .all(params);
 
   return rows.map(mapProfessional);
 }
@@ -57,12 +79,9 @@ export function createProfessional(payload) {
         first_name,
         last_name,
         display_name,
-        title,
         email,
-        phone,
         specializzazione,
         role_label,
-        professional_type,
         visible_in_standard,
         is_refertatore,
         active,
@@ -74,12 +93,9 @@ export function createProfessional(payload) {
         @first_name,
         @last_name,
         @display_name,
-        @title,
         @email,
-        @phone,
         @specializzazione,
         @role_label,
-        @professional_type,
         @visible_in_standard,
         @is_refertatore,
         @active,
@@ -109,12 +125,9 @@ export function updateProfessional(id, payload) {
           first_name = @first_name,
           last_name = @last_name,
           display_name = @display_name,
-          title = @title,
           email = @email,
-          phone = @phone,
           specializzazione = @specializzazione,
           role_label = @role_label,
-          professional_type = @professional_type,
           visible_in_standard = @visible_in_standard,
           is_refertatore = @is_refertatore,
           active = @active,
@@ -139,31 +152,56 @@ export function updateProfessionalStatus(id, active) {
   return getProfessionalById(id);
 }
 
+export function deleteProfessional(id) {
+  return updateProfessionalStatus(id, false);
+}
+
 function normalizeProfessionalPayload(payload) {
   const displayName = String(payload?.display_name || payload?.displayName || "").trim();
   const firstName = normalizeNullableString(payload?.first_name || payload?.firstName);
   const lastName = normalizeNullableString(payload?.last_name || payload?.lastName);
+  const email = normalizeNullableString(payload?.email);
 
   if (!displayName) {
-    throw createHttpError(400, "display_name obbligatorio.");
+    throw createHttpError(400, "display_name obbligatorio.", {
+      display_name: "Il nome visualizzato e obbligatorio.",
+    });
   }
 
-  const professionalType = String(payload?.professional_type || payload?.professionalType || "medico").trim();
-  if (professionalType !== "medico" && professionalType !== "tecnico") {
-    throw createHttpError(400, "professional_type non valido.");
+  const specializzazione = normalizeProfessionalSpecialization(
+    payload?.specializzazione,
+  );
+  if (!specializzazione) {
+    throw createHttpError(400, "specializzazione obbligatoria e non valida.", {
+      specializzazione:
+        "Seleziona una specializzazione valida dall'elenco disponibile.",
+    });
+  }
+
+  assertProfessionalEmailAvailable(email, payload?.id || payload?.professionalId || null);
+
+  const inferredRefertatore =
+    specializzazione === "Neurologia" ||
+    specializzazione === "Pneumologia" ||
+    specializzazione === "Allergologia";
+
+  const normalizedDisplayName =
+    displayName || [firstName, lastName].filter(Boolean).join(" ").trim();
+
+  if (!normalizedDisplayName) {
+    throw createHttpError(400, "display_name obbligatorio.", {
+      display_name: "Il nome visualizzato e obbligatorio.",
+    });
   }
 
   return {
     id: payload?.id || crypto.randomUUID(),
     first_name: firstName,
     last_name: lastName,
-    display_name: displayName,
-    title: normalizeNullableString(payload?.title),
-    email: normalizeNullableString(payload?.email),
-    phone: normalizeNullableString(payload?.phone),
-    specializzazione: normalizeNullableString(payload?.specializzazione),
+    display_name: normalizedDisplayName,
+    email,
+    specializzazione,
     role_label: normalizeNullableString(payload?.role_label || payload?.roleLabel),
-    professional_type: professionalType,
     visible_in_standard:
       payload?.visible_in_standard === false ||
       payload?.visible_in_standard === 0 ||
@@ -171,9 +209,14 @@ function normalizeProfessionalPayload(payload) {
         ? 0
         : 1,
     is_refertatore:
-      payload?.is_refertatore === true ||
-      payload?.is_refertatore === 1 ||
-      payload?.is_refertatore === "1"
+      payload?.is_refertatore === false ||
+      payload?.is_refertatore === 0 ||
+      payload?.is_refertatore === "0"
+        ? 0
+        : inferredRefertatore ||
+            payload?.is_refertatore === true ||
+            payload?.is_refertatore === 1 ||
+            payload?.is_refertatore === "1"
         ? 1
         : 0,
     active:
@@ -192,12 +235,9 @@ function mapProfessional(row) {
     first_name: row.first_name,
     last_name: row.last_name,
     display_name: row.display_name,
-    title: row.title,
     email: row.email,
-    phone: row.phone,
     specializzazione: row.specializzazione,
     role_label: row.role_label,
-    professional_type: row.professional_type || "medico",
     visible_in_standard: !!row.visible_in_standard,
     is_refertatore: !!row.is_refertatore,
     active: !!row.active,
@@ -213,4 +253,33 @@ function normalizeNullableString(value) {
   }
   const trimmed = String(value).trim();
   return trimmed || null;
+}
+
+function assertProfessionalEmailAvailable(email, excludeId = null) {
+  if (!email) {
+    return;
+  }
+
+  const db = getDb();
+  const existing = db
+    .prepare(
+      `
+        SELECT id
+        FROM professionals
+        WHERE LOWER(email) = LOWER(?)
+          AND (? IS NULL OR id <> ?)
+        LIMIT 1
+      `,
+    )
+    .get(email, excludeId, excludeId);
+
+  if (existing) {
+    throw createHttpError(
+      409,
+      "Esiste gia un professionista con questa email.",
+      {
+        email: "Esiste gia un professionista con questa email.",
+      },
+    );
+  }
 }

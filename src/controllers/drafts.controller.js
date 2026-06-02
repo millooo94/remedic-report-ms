@@ -102,6 +102,21 @@ export async function sendDraftToRefertatoreController(req, res) {
         stato: result.draft?.stato || null,
       },
     });
+    createAuditLog({
+      userId: req.authUser?.id || null,
+      role: req.authUser?.role || null,
+      action: result.emailSent
+        ? AUDIT_ACTIONS.REFERTATORE_NOTIFICATION_SENT
+        : AUDIT_ACTIONS.EMAIL_SEND_FAILED,
+      entityType: "draft",
+      entityId: req.params.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: {
+        target: "assigned_refertatore",
+        reason: result.emailSent ? null : "smtp_not_configured_or_send_failed",
+      },
+    });
     return res.json(result);
   } catch (error) {
     return handleDraftError(res, error);

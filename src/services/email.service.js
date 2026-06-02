@@ -3,6 +3,9 @@ import { env } from "../config/env.js";
 
 let transporter;
 
+const REMEDIC_BLUE = "#1C9EBD";
+const REMEDIC_GREEN = "#AECA20";
+
 export async function sendPasswordResetEmail({
   email,
   displayName,
@@ -12,21 +15,38 @@ export async function sendPasswordResetEmail({
     return { sent: false, reason: "smtp_not_configured" };
   }
 
-  await transporter.sendMail({
+  const greeting = `Ciao ${displayName || ""},`.trim();
+  const title = "Reimpostazione password";
+  const intro =
+    "Hai richiesto la reimpostazione della password per l'Area Riservata Remedic.";
+  const text = [
+    greeting,
+    "",
+    intro,
+    `Apri questo link entro 30 minuti: ${resetUrl}`,
+    "",
+    "Se non hai richiesto tu il reset, ignora questa email.",
+  ].join("\n");
+
+  const sent = await safeSendMail({
     from: env.smtpFrom,
     to: email,
     subject: "Reimpostazione password Area Riservata Remedic",
-    text: [
-      `Ciao ${displayName || ""},`.trim(),
-      "",
-      "Hai richiesto la reimpostazione della password per l'Area Riservata Remedic.",
-      `Apri questo link entro 30 minuti: ${resetUrl}`,
-      "",
-      "Se non hai richiesto tu il reset, ignora questa email.",
-    ].join("\n"),
+    text,
+    html: buildBrandedEmailHtml({
+      eyebrow: "Area riservata",
+      title,
+      intro,
+      lines: [
+        "Per motivi di sicurezza il link scade dopo 30 minuti.",
+        "Se non hai richiesto tu il reset, puoi ignorare questa email.",
+      ],
+      ctaLabel: "Reimposta password",
+      ctaUrl: resetUrl,
+    }),
   });
 
-  return { sent: true };
+  return sent;
 }
 
 export async function sendDraftAssignedEmail({
@@ -41,23 +61,35 @@ export async function sendDraftAssignedEmail({
   }
 
   const typeLabel = reportType === "psg" ? "PSG" : "EMG";
-  await transporter.sendMail({
+  const subject = `Nuovo referto ${typeLabel} da completare - Remedic`;
+  const greeting = `Gentile ${displayName || "collega"},`;
+  const intro = "E stato caricato un nuovo referto nella tua Area Refertatore.";
+  const lines = [
+    `Tipo referto: ${typeLabel}`,
+    `Paziente: ${patientName || "Non indicato"}`,
+    `Data esame/registrazione: ${referenceDate || "Non indicata"}`,
+    "Accedi all'Area Riservata per completare la refertazione.",
+  ];
+
+  const sent = await safeSendMail({
     from: env.smtpFrom,
     to: email,
-    subject: `Nuovo referto ${typeLabel} da completare - ${patientName || "Paziente"}`,
-    text: [
-      `Ciao ${displayName || ""},`.trim(),
-      "",
-      `E disponibile un nuovo referto ${typeLabel} da completare.`,
-      `Paziente: ${patientName || "Non indicato"}`,
-      `Data esame/registrazione: ${referenceDate || "Non indicata"}`,
-      `Accedi all'Area Riservata: ${env.appPublicUrl}`,
-      "",
-      "Il referto e pronto per la refertazione.",
-    ].join("\n"),
+    subject,
+    text: [greeting, "", intro, ...lines, "", `Accedi qui: ${env.appPublicUrl}`].join(
+      "\n",
+    ),
+    html: buildBrandedEmailHtml({
+      eyebrow: "Nuovo referto assegnato",
+      title: `Nuovo referto ${typeLabel} da completare`,
+      intro,
+      greeting,
+      lines,
+      ctaLabel: "Accedi all'Area Riservata",
+      ctaUrl: env.appPublicUrl,
+    }),
   });
 
-  return { sent: true };
+  return sent;
 }
 
 export async function sendSignedPdfNotificationEmail({
@@ -71,21 +103,39 @@ export async function sendSignedPdfNotificationEmail({
   }
 
   const typeLabel = reportType === "psg" ? "PSG" : "EMG";
-  await transporter.sendMail({
+  const subject = `Referto firmato caricato - ${typeLabel} - Remedic`;
+  const intro =
+    "Il PDF firmato definitivo e stato caricato e salvato su Drive correttamente.";
+  const lines = [
+    `Tipo referto: ${typeLabel}`,
+    `Paziente: ${patientName || "Non indicato"}`,
+    `Refertatore: ${refertatoreName || "Non indicato"}`,
+    `Data: ${new Date().toLocaleString("it-IT")}`,
+    `Stato Drive: ${driveLink ? "Salvato con link disponibile" : "Salvato"}`,
+  ];
+
+  const sent = await safeSendMail({
     from: env.smtpFrom,
     to: env.signedPdfNotificationEmail,
-    subject: `Referto firmato caricato - ${typeLabel} - ${patientName || "Paziente"}`,
+    subject,
     text: [
-      `Tipo referto: ${typeLabel}`,
-      `Paziente: ${patientName || "Non indicato"}`,
-      `Refertatore: ${refertatoreName || "Non indicato"}`,
-      `Data: ${new Date().toLocaleString("it-IT")}`,
-      "Salvataggio Drive: completato",
+      "Notifica automatica Remedic",
+      "",
+      intro,
+      ...lines,
       driveLink ? `Link Drive: ${driveLink}` : "Link Drive: non disponibile",
     ].join("\n"),
+    html: buildBrandedEmailHtml({
+      eyebrow: "Archivio definitivo",
+      title: `PDF firmato ${typeLabel} caricato`,
+      intro,
+      lines,
+      ctaLabel: driveLink ? "Apri su Drive" : null,
+      ctaUrl: driveLink || null,
+    }),
   });
 
-  return { sent: true };
+  return sent;
 }
 
 export async function sendSignedReportToPatient({
@@ -99,11 +149,21 @@ export async function sendSignedReportToPatient({
     return { sent: false, reason: "smtp_not_configured" };
   }
 
-  await transporter.sendMail({
+  const sent = await safeSendMail({
     from: env.smtpFrom,
     to,
     subject,
     text: body,
+    html: buildBrandedEmailHtml({
+      eyebrow: "Invio referto",
+      title: subject,
+      intro: body,
+      lines: [
+        "In allegato trovi il referto firmato relativo alla prestazione eseguita presso Remedic.",
+      ],
+      ctaLabel: null,
+      ctaUrl: null,
+    }),
     attachments: [
       {
         filename: attachmentFileName,
@@ -113,7 +173,84 @@ export async function sendSignedReportToPatient({
     ],
   });
 
-  return { sent: true };
+  return sent;
+}
+
+function buildBrandedEmailHtml({
+  eyebrow,
+  title,
+  intro,
+  greeting = "",
+  lines = [],
+  ctaLabel = null,
+  ctaUrl = null,
+}) {
+  const safeLines = lines
+    .filter(Boolean)
+    .map(
+      (line) =>
+        `<li style="margin:0 0 8px;color:#475569;font-size:15px;line-height:1.6;">${escapeHtml(line)}</li>`,
+    )
+    .join("");
+
+  const ctaHtml =
+    ctaLabel && ctaUrl
+      ? `
+        <div style="margin-top:28px;">
+          <a
+            href="${escapeHtml(ctaUrl)}"
+            style="display:inline-block;padding:14px 22px;border-radius:999px;background:${REMEDIC_BLUE};color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;"
+          >
+            ${escapeHtml(ctaLabel)}
+          </a>
+        </div>
+      `
+      : "";
+
+  return `
+    <div style="margin:0;padding:32px 16px;background:#eef7fa;font-family:Arial,'Open Sans',sans-serif;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 20px 54px rgba(15,23,42,0.12);">
+        <div style="padding:24px 28px;background:linear-gradient(135deg, ${REMEDIC_BLUE} 0%, ${REMEDIC_GREEN} 100%);color:#ffffff;">
+          <div style="font-size:30px;font-weight:800;letter-spacing:0.02em;">Remedic</div>
+          <div style="margin-top:6px;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;opacity:0.92;">
+            Centro Medico Polispecialistico
+          </div>
+        </div>
+        <div style="padding:30px 28px 32px;">
+          ${
+            eyebrow
+              ? `<div style="display:inline-block;padding:6px 12px;border-radius:999px;background:rgba(28,158,189,0.12);color:${REMEDIC_BLUE};font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(eyebrow)}</div>`
+              : ""
+          }
+          <h1 style="margin:16px 0 12px;font-size:28px;line-height:1.2;color:#0f172a;">${escapeHtml(title)}</h1>
+          ${
+            greeting
+              ? `<p style="margin:0 0 14px;color:#0f172a;font-size:15px;line-height:1.6;">${escapeHtml(greeting)}</p>`
+              : ""
+          }
+          <p style="margin:0;color:#475569;font-size:15px;line-height:1.7;">${escapeHtml(intro)}</p>
+          ${
+            safeLines
+              ? `<ul style="margin:20px 0 0;padding-left:20px;">${safeLines}</ul>`
+              : ""
+          }
+          ${ctaHtml}
+        </div>
+        <div style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px;line-height:1.6;">
+          Questa e una comunicazione automatica Remedic. Per supporto operativo fai riferimento all'Area Riservata.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 async function canSendEmail() {
@@ -137,4 +274,14 @@ async function canSendEmail() {
   }
 
   return true;
+}
+
+async function safeSendMail(payload) {
+  try {
+    await transporter.sendMail(payload);
+    return { sent: true };
+  } catch (error) {
+    console.error("Email send error:", error?.message || error);
+    return { sent: false, reason: "smtp_send_failed" };
+  }
 }

@@ -35,12 +35,18 @@ export function validateSignedDraftPdfRequest(req, res, next) {
   if (!fileName || !mimeType || !base64) {
     return res.status(400).json({
       error: "fileName, mimeType e base64 sono obbligatori per il PDF firmato.",
+      fieldErrors: {
+        pdf: "Seleziona un PDF firmato valido prima di procedere.",
+      },
     });
   }
 
   if (mimeType !== "application/pdf") {
     return res.status(400).json({
       error: "Il PDF firmato deve avere mimeType application/pdf.",
+      fieldErrors: {
+        pdf: "Il file selezionato deve essere un PDF valido.",
+      },
     });
   }
 

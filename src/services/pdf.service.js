@@ -11,9 +11,10 @@ import { findOrCreateFolder, uploadOrReplaceFile } from "./drive.service.js";
 
 export async function generatePdfPrintPage(payload) {
   const { buffer, fileName, context } = await generatePdfDocument(payload);
+  let drive = null;
 
   try {
-    await uploadReportPdfToDrive(context, buffer, {
+    drive = await uploadReportPdfToDrive(context, buffer, {
       throwOnError: false,
     });
   } catch {
@@ -21,7 +22,10 @@ export async function generatePdfPrintPage(payload) {
   }
 
   const base64Pdf = Buffer.from(buffer).toString("base64");
-  return buildPrintPage(fileName, base64Pdf);
+  return {
+    htmlPage: buildPrintPage(fileName, base64Pdf),
+    drive,
+  };
 }
 
 export async function generatePdfPreview(payload) {

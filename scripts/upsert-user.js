@@ -9,6 +9,7 @@ const email = normalizeEmail(args.email);
 const password = String(args.password || "");
 const displayName = String(args.name || args.displayName || "").trim();
 const specializzazione = String(args.specializzazione || "").trim();
+const professionalId = String(args.professionalId || args.professional_id || "").trim();
 const assignedTypes = String(args.assigned || args.assignedTypes || "")
   .split(",")
   .map((item) => item.trim().toLowerCase())
@@ -26,6 +27,11 @@ if (role !== "admin" && role !== "refertatore") {
   process.exit(1);
 }
 
+if (role === "refertatore" && !professionalId) {
+  console.error("Per un refertatore e obbligatorio --professionalId <id-professionista>.");
+  process.exit(1);
+}
+
 const existing = getUserByEmail(email);
 
 if (existing) {
@@ -34,6 +40,7 @@ if (existing) {
     email,
     password,
     display_name: displayName,
+    professional_id: role === "refertatore" ? professionalId : null,
     specializzazione: specializzazione || null,
     active: true,
     assignedTypes: role === "refertatore" ? assignedTypes : [],
@@ -47,6 +54,7 @@ const created = createUser({
   email,
   password,
   display_name: displayName,
+  professional_id: role === "refertatore" ? professionalId : null,
   specializzazione: specializzazione || null,
   active: true,
   must_change_password: role === "admin" ? 0 : 1,

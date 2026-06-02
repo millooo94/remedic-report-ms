@@ -6,6 +6,7 @@ import {
   getUserByEmail,
   getUserById,
   markUserLogin,
+  verifyUserPasswordById,
   verifyUserCredentials,
 } from "./users.service.js";
 import {
@@ -14,7 +15,6 @@ import {
   validatePasswordStrength,
 } from "./password.service.js";
 
-const SESSION_TTL_MS = Number(env.sessionTtlHours || 8) * 60 * 60 * 1000;
 const RESET_TTL_MS = 30 * 60 * 1000;
 
 function createHttpError(status, message) {
@@ -32,15 +32,23 @@ export function buildAuthUserResponse(user) {
     id: user.id,
     role: user.role,
     email: user.email,
+    firstName: user.first_name || null,
+    lastName: user.last_name || null,
     displayName: user.display_name,
     specializzazione: user.specializzazione,
+    avatarDataUrl: user.avatar_data_url || null,
     active: user.active,
     mustChangePassword: user.must_change_password,
     assignedTypes: user.assignedTypes || [],
   };
 }
 
-export function loginWithPassword({ email, password, ipAddress, userAgent }) {
+export function loginWithPassword({
+  email,
+  password,
+  ipAddress,
+  userAgent,
+}) {
   const user = verifyUserCredentials(email, password);
 
   if (!user) {
@@ -51,7 +59,7 @@ export function loginWithPassword({ email, password, ipAddress, userAgent }) {
   const sessionSecret = generateOpaqueToken(32);
   const csrfToken = generateOpaqueToken(24);
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
+  const expiresAt = new Date(now.getTime() + buildSessionTtlMs()).toISOString();
 
   getDb()
     .prepare(
@@ -105,6 +113,10 @@ export function loginWithPassword({ email, password, ipAddress, userAgent }) {
     csrfToken,
     expiresAt,
   };
+}
+
+function buildSessionTtlMs() {
+  return Number(env.sessionTtlHours || 8) * 60 * 60 * 1000;
 }
 
 export function getSessionUser(sessionCookieValue) {
@@ -223,10 +235,52 @@ export function resetPasswordWithToken(token, newPassword) {
   return getUserById(row.user_id);
 }
 
+export function changeAuthenticatedPassword({
+  userId,
+  currentPassword,
+  newPassword,
+  currentSessionId = null,
+}) {
+  const normalizedCurrent = String(currentPassword || "");
+  const normalizedNext = String(newPassword || "");
+
+  if (!normalizedCurrent || !normalizedNext) {
+    throw createHttpError(400, "Password attuale e nuova password sono obbligatorie.");
+  }
+
+  if (!verifyUserPasswordById(userId, normalizedCurrent)) {
+    throw createHttpError(400, "La password attuale non e corretta.");
+  }
+
+  if (normalizedCurrent === normalizedNext) {
+    throw createHttpError(400, "La nuova password deve essere diversa da quella attuale.");
+  }
+
+  const updatedUser = changeUserPassword(userId, normalizedNext, {
+    mustChangePassword: false,
+  });
+
+  revokeOtherUserSessions(userId, currentSessionId);
+  return updatedUser;
+}
+
 function revokeAllUserSessions(userId) {
   getDb()
     .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
     .run(new Date().toISOString(), userId);
+}
+
+function revokeOtherUserSessions(userId, currentSessionId) {
+  if (!currentSessionId) {
+    revokeAllUserSessions(userId);
+    return;
+  }
+
+  getDb()
+    .prepare(
+      "UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND id != ?",
+    )
+    .run(new Date().toISOString(), userId, currentSessionId);
 }
 
 function parseAndVerifySessionCookie(sessionCookieValue) {

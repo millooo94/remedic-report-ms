@@ -18,7 +18,11 @@ function handleAttachmentError(res, error) {
     console.error("Draft attachment error:", error?.message || error);
   }
 
-  return res.status(status).json({ error: message });
+  return res.status(status).json({
+    error: message,
+    message,
+    ...(error?.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+  });
 }
 
 export function createDraftAttachmentController(req, res) {
@@ -94,17 +98,8 @@ export async function uploadSignedDraftPdfController(req, res) {
       userAgent: req.headers["user-agent"],
       metadata: {
         tipo_referto: req.body?.tipo_referto || null,
-        driveFileId: result.drive?.driveFileId || null,
+        storage: "local_signed_pdf",
       },
-    });
-    createAuditLog({
-      userId: req.authUser?.id || null,
-      role: req.authUser?.role || null,
-      action: AUDIT_ACTIONS.DRAFT_COMPLETED,
-      entityType: "draft",
-      entityId: req.params.id,
-      ipAddress: req.ip,
-      userAgent: req.headers["user-agent"],
     });
     return res.status(201).json(result);
   } catch (error) {

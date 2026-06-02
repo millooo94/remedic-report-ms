@@ -1,11 +1,13 @@
 import { env } from "../config/env.js";
 import {
   buildAuthUserResponse,
+  changeAuthenticatedPassword,
   createPasswordResetRequest,
   loginWithPassword,
   resetPasswordWithToken,
   revokeSession,
 } from "../services/auth.service.js";
+import { saveUserAvatar, updateOwnProfile } from "../services/users.service.js";
 import { AUDIT_ACTIONS, createAuditLog } from "../services/audit.service.js";
 import {
   sendPasswordResetEmail,
@@ -20,7 +22,11 @@ function handleAuthError(res, error, fallbackMessage = "Errore interno di autent
     console.error("Auth error:", error?.message || error);
   }
 
-  return res.status(status).json({ error: message });
+  return res.status(status).json({
+    error: message,
+    message,
+    ...(error?.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+  });
 }
 
 export function loginController(req, res) {
@@ -157,6 +163,92 @@ export function resetPasswordController(req, res) {
       res,
       error,
       "Errore interno durante la reimpostazione della password.",
+    );
+  }
+}
+
+export function changePasswordController(req, res) {
+  try {
+    const user = changeAuthenticatedPassword({
+      userId: req.authUser?.id,
+      currentPassword: req.body?.currentPassword,
+      newPassword: req.body?.newPassword,
+      currentSessionId: req.authSession?.id || null,
+    });
+
+    createAuditLog({
+      userId: user.id,
+      role: user.role,
+      action: AUDIT_ACTIONS.PASSWORD_CHANGED_AUTHENTICATED,
+      entityType: "user",
+      entityId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+
+    return res.json({
+      message:
+        "Password aggiornata correttamente. Le altre sessioni attive sono state revocate.",
+    });
+  } catch (error) {
+    return handleAuthError(
+      res,
+      error,
+      "Errore interno durante l'aggiornamento della password.",
+    );
+  }
+}
+
+export function updateProfileController(req, res) {
+  try {
+    const user = updateOwnProfile(req.authUser?.id, req.body);
+
+    createAuditLog({
+      userId: user.id,
+      role: user.role,
+      action: AUDIT_ACTIONS.PROFILE_UPDATED,
+      entityType: "user",
+      entityId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+
+    return res.json({
+      user: buildAuthUserResponse(user),
+      message: "Profilo aggiornato correttamente.",
+    });
+  } catch (error) {
+    return handleAuthError(
+      res,
+      error,
+      "Errore interno durante l'aggiornamento del profilo.",
+    );
+  }
+}
+
+export function uploadProfileAvatarController(req, res) {
+  try {
+    const user = saveUserAvatar(req.authUser?.id, req.body);
+
+    createAuditLog({
+      userId: user.id,
+      role: user.role,
+      action: AUDIT_ACTIONS.PROFILE_AVATAR_UPDATED,
+      entityType: "user",
+      entityId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+
+    return res.status(201).json({
+      user: buildAuthUserResponse(user),
+      message: "Immagine profilo aggiornata correttamente.",
+    });
+  } catch (error) {
+    return handleAuthError(
+      res,
+      error,
+      "Errore interno durante l'aggiornamento dell'immagine profilo.",
     );
   }
 }

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  completeRefertatoreDraftController,
   exportPreviewRefertatoreDraftController,
   getRefertatoreDraftController,
   listRefertatoreArchiveController,
@@ -11,7 +12,7 @@ import { requireAuth, requireRole } from "../middleware/require-auth.js";
 import { requireCsrf } from "../middleware/require-csrf.js";
 import { uploadSignedDraftPdfController } from "../controllers/draft-attachments.controller.js";
 import { validateSignedDraftPdfRequest } from "../middleware/validate-draft-attachment-request.js";
-import { requireDraftWriteAccess } from "../middleware/require-neurologist-auth.js";
+import { requireDraftWriteAccess } from "../middleware/require-refertatore-auth.js";
 
 const router = Router();
 
@@ -22,6 +23,7 @@ router.get("/refertatore/drafts", listRefertatoreDraftsController);
 router.get("/refertatore/archive", listRefertatoreArchiveController);
 router.get("/refertatore/drafts/:id", getRefertatoreDraftController);
 router.put("/refertatore/drafts/:id", requireCsrf, updateRefertatoreDraftController);
+router.post("/refertatore/drafts/:id/complete", requireCsrf, completeRefertatoreDraftController);
 router.post("/refertatore/drafts/:id/export-preview", requireCsrf, exportPreviewRefertatoreDraftController);
 router.post(
   "/refertatore/drafts/:id/signed-pdf",

@@ -7,14 +7,23 @@ export const AUDIT_ACTIONS = {
   LOGOUT: "LOGOUT",
   PASSWORD_RESET_REQUESTED: "PASSWORD_RESET_REQUESTED",
   PASSWORD_CHANGED: "PASSWORD_CHANGED",
+  PASSWORD_CHANGED_AUTHENTICATED: "PASSWORD_CHANGED_AUTHENTICATED",
+  PROFILE_UPDATED: "PROFILE_UPDATED",
+  PROFILE_AVATAR_UPDATED: "PROFILE_AVATAR_UPDATED",
   PROFESSIONAL_CREATED: "PROFESSIONAL_CREATED",
   PROFESSIONAL_UPDATED: "PROFESSIONAL_UPDATED",
+  PROFESSIONAL_DISABLED: "PROFESSIONAL_DISABLED",
   REFERTATORE_CREATED: "REFERTATORE_CREATED",
   REFERTATORE_UPDATED: "REFERTATORE_UPDATED",
+  REFERTATORE_DISABLED: "REFERTATORE_DISABLED",
   DRAFT_SENT_TO_REFERTATORE: "DRAFT_SENT_TO_REFERTATORE",
+  REFERTATORE_NOTIFICATION_SENT: "REFERTATORE_NOTIFICATION_SENT",
   DRAFT_REASSIGNED: "DRAFT_REASSIGNED",
+  REFERTATORE_DRAFT_COMPLETED: "REFERTATORE_DRAFT_COMPLETED",
   PDF_PREVIEW_EXPORTED: "PDF_PREVIEW_EXPORTED",
   SIGNED_PDF_UPLOADED: "SIGNED_PDF_UPLOADED",
+  SIGNED_PDF_NOTIFICATION_SENT: "SIGNED_PDF_NOTIFICATION_SENT",
+  EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
   SIGNED_REPORT_SENT_TO_PATIENT: "SIGNED_REPORT_SENT_TO_PATIENT",
   DRAFT_COMPLETED: "DRAFT_COMPLETED",
   DRAFT_DELETED: "DRAFT_DELETED",
@@ -96,8 +105,22 @@ export function listAuditLogs(filters = {}) {
   }
 
   const whereClause = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const limit = sanitizePaginationValue(filters.limit, 50, 1, 200);
-  const offset = sanitizePaginationValue(filters.offset, 0, 0, 1000000);
+  const pageSize = sanitizePaginationValue(
+    filters.pageSize ?? filters.limit,
+    20,
+    1,
+    200,
+  );
+  const page = sanitizePaginationValue(filters.page, 1, 1, 1000000);
+  const offset = sanitizePaginationValue(
+    filters.offset,
+    (page - 1) * pageSize,
+    0,
+    1000000,
+  );
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS total FROM audit_logs ${whereClause}`)
+    .get(params);
 
   const rows = db
     .prepare(
@@ -106,13 +129,13 @@ export function listAuditLogs(filters = {}) {
         FROM audit_logs
         ${whereClause}
         ORDER BY created_at DESC
-        LIMIT @limit
+        LIMIT @pageSize
         OFFSET @offset
       `,
     )
     .all({
       ...params,
-      limit,
+      pageSize,
       offset,
     });
 
@@ -127,9 +150,12 @@ export function listAuditLogs(filters = {}) {
       ip_address: row.ip_address,
       user_agent: row.user_agent,
       metadata: safeParseJson(row.metadata_json),
-      created_at: row.created_at,
+        created_at: row.created_at,
     })),
-    limit,
+    total: Number(totalRow?.total || 0),
+    page,
+    pageSize,
+    limit: pageSize,
     offset,
   };
 }

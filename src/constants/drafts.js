@@ -4,11 +4,21 @@ export const ALLOWED_DRAFT_STATUSES = [
   "bozza",
   "anamnesi_raccolta",
   "in_refertazione",
-  "in_attesa_neurologo",
-  "in_refertazione_neurologo",
+  "in_attesa_refertatore",
+  "in_refertazione_refertatore",
   "pronto_per_firma",
   "firmato_caricato",
   "completato",
+];
+
+export const LEGACY_DRAFT_STATUS_MAP = {
+  in_attesa_refertatore: "in_attesa_refertatore",
+  in_refertazione_refertatore: "in_refertazione_refertatore",
+};
+
+export const ACCEPTED_DRAFT_STATUSES = [
+  ...ALLOWED_DRAFT_STATUSES,
+  ...Object.keys(LEGACY_DRAFT_STATUS_MAP),
 ];
 
 export const EMG_ATTACHMENT_KINDS = {

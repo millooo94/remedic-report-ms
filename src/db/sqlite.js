@@ -3,9 +3,19 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { ALLOWED_DRAFT_STATUSES, ALLOWED_REPORT_TYPES } from "../constants/drafts.js";
 import { env } from "../config/env.js";
-import { DEFAULT_PROFESSIONALS } from "../constants/default-professionals.js";
 
 let db;
+const PROFESSIONAL_TYPE_VALUES = [
+  "medico",
+  "dietista",
+  "ostetrica",
+  "psicoterapeuta",
+  "tnfp",
+  "altro",
+  "tecnico",
+  "professionista_sanitario",
+  "professionista sanitario",
+];
 
 const REPORT_DRAFTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS report_drafts (
@@ -67,37 +77,25 @@ const DRAFT_ATTACHMENTS_INDEXES_SQL = [
   "CREATE INDEX IF NOT EXISTS idx_draft_attachments_kind ON draft_attachments (kind);",
 ];
 
-const NEUROLOGIST_USERS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS neurologist_users (
-    id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    specializzazione TEXT NOT NULL DEFAULT 'Neurologia',
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-`;
-
-const NEUROLOGIST_USERS_INDEXES_SQL = [
-  "CREATE INDEX IF NOT EXISTS idx_neurologist_users_email ON neurologist_users (email);",
-  "CREATE INDEX IF NOT EXISTS idx_neurologist_users_active ON neurologist_users (active);",
-];
-
 const USERS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     role TEXT NOT NULL CHECK (role IN ('admin', 'refertatore')),
+    professional_id TEXT NULL,
+    first_name TEXT NULL,
+    last_name TEXT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     display_name TEXT NOT NULL,
     specializzazione TEXT NULL,
+    avatar_path TEXT NULL,
+    avatar_mime_type TEXT NULL,
     active INTEGER NOT NULL DEFAULT 1,
     must_change_password INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    last_login_at TEXT NULL
+    last_login_at TEXT NULL,
+    FOREIGN KEY (professional_id) REFERENCES professionals (id) ON DELETE SET NULL
   );
 `;
 
@@ -105,6 +103,7 @@ const USERS_INDEXES_SQL = [
   "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);",
   "CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);",
   "CREATE INDEX IF NOT EXISTS idx_users_active ON users (active);",
+  "CREATE INDEX IF NOT EXISTS idx_users_professional_id ON users (professional_id);",
 ];
 
 const REFERTATORE_ASSIGNMENTS_TABLE_SQL = `
@@ -177,7 +176,7 @@ const PROFESSIONALS_TABLE_SQL = `
     phone TEXT NULL,
     specializzazione TEXT NULL,
     role_label TEXT NULL,
-    professional_type TEXT NOT NULL DEFAULT 'medico' CHECK (professional_type IN ('medico', 'tecnico')),
+    professional_type TEXT NOT NULL DEFAULT 'medico' CHECK (professional_type IN (${quoted(PROFESSIONAL_TYPE_VALUES)})),
     visible_in_standard INTEGER NOT NULL DEFAULT 1,
     is_refertatore INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
@@ -256,7 +255,6 @@ export function getDb() {
   ensureReportDraftsSchema(db);
   db.exec(DRAFT_ATTACHMENTS_TABLE_SQL);
   ensureDraftAttachmentsSchema(db);
-  db.exec(NEUROLOGIST_USERS_TABLE_SQL);
   db.exec(USERS_TABLE_SQL);
   db.exec(REFERTATORE_ASSIGNMENTS_TABLE_SQL);
   db.exec(AUTH_SESSIONS_TABLE_SQL);
@@ -266,16 +264,13 @@ export function getDb() {
   db.exec(DRAFT_EMAIL_DELIVERIES_TABLE_SQL);
   ensureAuthSessionsSchema(db);
   ensureProfessionalsSchema(db);
+  ensureUsersSchema(db);
 
   for (const sql of REPORT_DRAFTS_INDEXES_SQL) {
     db.exec(sql);
   }
 
   for (const sql of DRAFT_ATTACHMENTS_INDEXES_SQL) {
-    db.exec(sql);
-  }
-
-  for (const sql of NEUROLOGIST_USERS_INDEXES_SQL) {
     db.exec(sql);
   }
 
@@ -307,9 +302,6 @@ export function getDb() {
     db.exec(sql);
   }
 
-  migrateLegacyNeurologists(db);
-  seedProfessionals(db);
-
   return db;
 }
 
@@ -326,12 +318,18 @@ function ensureReportDraftsSchema(database) {
   }
 
   const expectedStatuses = [
-    "in_attesa_neurologo",
-    "in_refertazione_neurologo",
+    "in_attesa_refertatore",
+    "in_refertazione_refertatore",
     "pronto_per_firma",
     "firmato_caricato",
   ];
-  const needsMigration = expectedStatuses.some((status) => !currentSql.includes(status));
+  const legacyStatuses = [
+    "in_attesa_neurologo",
+    "in_refertazione_neurologo",
+  ];
+  const needsMigration =
+    expectedStatuses.some((status) => !currentSql.includes(status)) ||
+    legacyStatuses.some((status) => currentSql.includes(status));
 
   if (!needsMigration) {
     ensureReportDraftsColumns(database);
@@ -374,7 +372,11 @@ function ensureReportDraftsSchema(database) {
       SELECT
         id,
         tipo_referto,
-        stato,
+        CASE
+          WHEN stato = 'in_attesa_neurologo' THEN 'in_attesa_refertatore'
+          WHEN stato = 'in_refertazione_neurologo' THEN 'in_refertazione_refertatore'
+          ELSE stato
+        END,
         paziente_nome,
         paziente_cognome,
         paziente_nome_completo,
@@ -399,6 +401,20 @@ function ensureReportDraftsSchema(database) {
       FROM report_drafts_legacy
     `);
     database.exec("DROP TABLE report_drafts_legacy");
+    database.exec(`
+      UPDATE report_drafts
+      SET form_data_json = json_set(
+        form_data_json,
+        '$.meta.draftStatus',
+        CASE
+          WHEN json_extract(form_data_json, '$.meta.draftStatus') = 'in_attesa_neurologo' THEN 'in_attesa_refertatore'
+          WHEN json_extract(form_data_json, '$.meta.draftStatus') = 'in_refertazione_neurologo' THEN 'in_refertazione_refertatore'
+          ELSE json_extract(form_data_json, '$.meta.draftStatus')
+        END
+      )
+      WHERE json_valid(form_data_json) = 1
+        AND json_extract(form_data_json, '$.meta.draftStatus') IN ('in_attesa_neurologo', 'in_refertazione_neurologo')
+    `);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
@@ -408,6 +424,25 @@ function ensureReportDraftsSchema(database) {
   }
 
   ensureReportDraftsColumns(database);
+}
+
+function ensureUsersSchema(database) {
+  const columns = database
+    .prepare("PRAGMA table_info(users)")
+    .all()
+    .map((column) => column.name);
+
+  [
+    ["professional_id", "TEXT NULL"],
+    ["first_name", "TEXT NULL"],
+    ["last_name", "TEXT NULL"],
+    ["avatar_path", "TEXT NULL"],
+    ["avatar_mime_type", "TEXT NULL"],
+  ]
+    .filter(([name]) => !columns.includes(name))
+    .forEach(([name, sqlType]) => {
+      database.exec(`ALTER TABLE users ADD COLUMN ${name} ${sqlType}`);
+    });
 }
 
 function ensureDraftAttachmentsSchema(database) {
@@ -462,6 +497,74 @@ function ensureAuthSessionsSchema(database) {
 }
 
 function ensureProfessionalsSchema(database) {
+  const currentSql = database
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'professionals'",
+    )
+    .get()?.sql;
+
+  if (!currentSql) {
+    database.exec(PROFESSIONALS_TABLE_SQL);
+    return;
+  }
+
+  const needsConstraintMigration = !currentSql.includes("tnfp");
+
+  if (needsConstraintMigration) {
+    database.exec("PRAGMA foreign_keys = OFF");
+    database.exec("BEGIN");
+
+    try {
+      database.exec("ALTER TABLE professionals RENAME TO professionals_legacy");
+      database.exec(PROFESSIONALS_TABLE_SQL);
+      database.exec(`
+        INSERT INTO professionals (
+          id,
+          first_name,
+          last_name,
+          display_name,
+          title,
+          email,
+          phone,
+          specializzazione,
+          role_label,
+          professional_type,
+          visible_in_standard,
+          is_refertatore,
+          active,
+          sort_order,
+          created_at,
+          updated_at
+        )
+        SELECT
+          id,
+          first_name,
+          last_name,
+          display_name,
+          title,
+          email,
+          phone,
+          specializzazione,
+          role_label,
+          COALESCE(NULLIF(professional_type, ''), 'medico'),
+          COALESCE(visible_in_standard, 1),
+          COALESCE(is_refertatore, 0),
+          COALESCE(active, 1),
+          COALESCE(sort_order, 0),
+          created_at,
+          updated_at
+        FROM professionals_legacy
+      `);
+      database.exec("DROP TABLE professionals_legacy");
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      database.exec("PRAGMA foreign_keys = ON");
+    }
+  }
+
   const columns = database
     .prepare("PRAGMA table_info(professionals)")
     .all()
@@ -477,242 +580,6 @@ function ensureProfessionalsSchema(database) {
     .forEach(([name, sqlType]) => {
       database.exec(`ALTER TABLE professionals ADD COLUMN ${name} ${sqlType}`);
     });
-}
-
-function migrateLegacyNeurologists(database) {
-  const hasLegacyTable = database
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'neurologist_users'",
-    )
-    .get();
-
-  if (!hasLegacyTable) {
-    return;
-  }
-
-  const legacyUsers = database.prepare("SELECT * FROM neurologist_users").all();
-
-  if (!legacyUsers.length) {
-    return;
-  }
-
-  const insertUser = database.prepare(`
-    INSERT INTO users (
-      id,
-      role,
-      email,
-      password_hash,
-      display_name,
-      specializzazione,
-      active,
-      must_change_password,
-      created_at,
-      updated_at,
-      last_login_at
-    ) VALUES (
-      @id,
-      'refertatore',
-      @email,
-      @password_hash,
-      @display_name,
-      @specializzazione,
-      @active,
-      0,
-      @created_at,
-      @updated_at,
-      NULL
-    )
-  `);
-
-  const insertAssignment = database.prepare(`
-    INSERT OR IGNORE INTO refertatore_assignments (
-      id,
-      user_id,
-      tipo_referto,
-      active,
-      created_at,
-      updated_at
-    ) VALUES (
-      @id,
-      @user_id,
-      @tipo_referto,
-      1,
-      @created_at,
-      @updated_at
-    )
-  `);
-
-  const insertProfessional = database.prepare(`
-    INSERT OR IGNORE INTO professionals (
-      id,
-      first_name,
-      last_name,
-      display_name,
-      title,
-      email,
-      phone,
-      specializzazione,
-      role_label,
-      professional_type,
-      visible_in_standard,
-      is_refertatore,
-      active,
-      sort_order,
-      created_at,
-      updated_at
-    ) VALUES (
-      @id,
-      @first_name,
-      @last_name,
-      @display_name,
-      NULL,
-      @email,
-      NULL,
-      @specializzazione,
-      'Medico refertatore',
-      'medico',
-      1,
-      1,
-      @active,
-      0,
-      @created_at,
-      @updated_at
-    )
-  `);
-
-  for (const legacyUser of legacyUsers) {
-    const existingUser = database
-      .prepare("SELECT id FROM users WHERE email = ?")
-      .get(legacyUser.email);
-
-    const userId = existingUser?.id || legacyUser.id;
-
-    if (!existingUser) {
-      insertUser.run({
-        id: userId,
-        email: legacyUser.email,
-        password_hash: legacyUser.password_hash,
-        display_name: legacyUser.display_name,
-        specializzazione: legacyUser.specializzazione || "Neurologia",
-        active: legacyUser.active ?? 1,
-        created_at: legacyUser.created_at,
-        updated_at: legacyUser.updated_at,
-      });
-    }
-
-    insertAssignment.run({
-      id: `${userId}-emg`,
-      user_id: userId,
-      tipo_referto: "emg",
-      created_at: legacyUser.created_at,
-      updated_at: legacyUser.updated_at,
-    });
-
-    insertAssignment.run({
-      id: `${userId}-psg`,
-      user_id: userId,
-      tipo_referto: "psg",
-      created_at: legacyUser.created_at,
-      updated_at: legacyUser.updated_at,
-    });
-
-    const { firstName, lastName } = splitDisplayName(legacyUser.display_name);
-    insertProfessional.run({
-      id: `legacy-prof-${userId}`,
-      first_name: firstName,
-      last_name: lastName,
-      display_name: legacyUser.display_name,
-      email: legacyUser.email,
-      specializzazione: legacyUser.specializzazione || "Neurologia",
-      active: legacyUser.active ?? 1,
-      created_at: legacyUser.created_at,
-      updated_at: legacyUser.updated_at,
-    });
-  }
-}
-
-function seedProfessionals(database) {
-  const total = Number(
-    database.prepare("SELECT COUNT(*) AS total FROM professionals").get()?.total || 0,
-  );
-
-  if (total > 0) {
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const insertProfessional = database.prepare(`
-    INSERT INTO professionals (
-      id,
-      first_name,
-      last_name,
-      display_name,
-      title,
-      email,
-      phone,
-      specializzazione,
-      role_label,
-      professional_type,
-      visible_in_standard,
-      is_refertatore,
-      active,
-      sort_order,
-      created_at,
-      updated_at
-    ) VALUES (
-      @id,
-      @first_name,
-      @last_name,
-      @display_name,
-      @title,
-      @email,
-      @phone,
-      @specializzazione,
-      @role_label,
-      @professional_type,
-      @visible_in_standard,
-      @is_refertatore,
-      @active,
-      @sort_order,
-      @created_at,
-      @updated_at
-    )
-  `);
-
-  DEFAULT_PROFESSIONALS.forEach((professional, index) => {
-    insertProfessional.run({
-      id: professional.id,
-      first_name: professional.first_name || null,
-      last_name: professional.last_name || null,
-      display_name: professional.display_name,
-      title: professional.title || null,
-      email: professional.email || null,
-      phone: professional.phone || null,
-      specializzazione: professional.specializzazione || null,
-      role_label: professional.role_label || null,
-      professional_type: professional.professional_type || "medico",
-      visible_in_standard: professional.visible_in_standard ?? 1,
-      is_refertatore: professional.is_refertatore ?? 0,
-      active: professional.active ?? 1,
-      sort_order: professional.sort_order ?? index,
-      created_at: now,
-      updated_at: now,
-    });
-  });
-}
-
-function splitDisplayName(displayName) {
-  const parts = String(displayName || "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) {
-    return { firstName: null, lastName: null };
-  }
-  if (parts.length === 1) {
-    return { firstName: parts[0], lastName: null };
-  }
-  return {
-    firstName: parts.slice(0, -1).join(" "),
-    lastName: parts[parts.length - 1],
-  };
 }
 
 function resolveDbPath(dbPath) {

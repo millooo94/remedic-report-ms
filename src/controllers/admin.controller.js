@@ -1,14 +1,21 @@
 import path from "node:path";
 import { env } from "../config/env.js";
 import { AUDIT_ACTIONS, createAuditLog, listAuditLogs } from "../services/audit.service.js";
-import { getDraftById, listDrafts } from "../services/drafts.service.js";
+import {
+  deleteDraft,
+  getDraftById,
+  hideDraftFromAdminArchive,
+  listDrafts,
+} from "../services/drafts.service.js";
 import {
   createUser,
+  getUserById,
   listUsers,
   updateUser,
   updateUserStatus,
 } from "../services/users.service.js";
 import {
+  archiveExistingSignedDraftPdfToDrive,
   getSignedDraftAttachmentContentForDraft,
   getSignedDraftAttachmentForDraft,
 } from "../services/draft-attachments.service.js";
@@ -27,13 +34,20 @@ function handleError(res, error, fallbackMessage) {
     console.error("Admin error:", error?.message || error);
   }
 
-  return res.status(status).json({ error: message });
+  return res.status(status).json({
+    error: message,
+    message,
+    ...(error?.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+  });
 }
 
 export function listAdminUsersController(req, res) {
   try {
     return res.json({
-      items: listUsers(req.query),
+      items: listUsers({
+        ...req.query,
+        active: req.query?.active === undefined ? "1" : req.query.active,
+      }),
     });
   } catch (error) {
     return handleError(res, error, "Errore interno nel caricamento utenti.");
@@ -84,7 +98,7 @@ export function updateAdminUserStatusController(req, res) {
     createAuditLog({
       userId: req.authUser?.id,
       role: req.authUser?.role,
-      action: AUDIT_ACTIONS.REFERTATORE_UPDATED,
+      action: user.active ? AUDIT_ACTIONS.REFERTATORE_UPDATED : AUDIT_ACTIONS.REFERTATORE_DISABLED,
       entityType: "user",
       entityId: user.id,
       ipAddress: req.ip,
@@ -94,6 +108,30 @@ export function updateAdminUserStatusController(req, res) {
     return res.json(user);
   } catch (error) {
     return handleError(res, error, "Errore interno nell'aggiornamento stato utente.");
+  }
+}
+
+export function deleteAdminUserController(req, res) {
+  try {
+    const existing = getUserById(req.params.id);
+    const user = updateUserStatus(req.params.id, false);
+    createAuditLog({
+      userId: req.authUser?.id,
+      role: req.authUser?.role,
+      action: AUDIT_ACTIONS.REFERTATORE_DISABLED,
+      entityType: "user",
+      entityId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: { role: existing.role, active: user.active },
+    });
+    return res.json({
+      ok: true,
+      user,
+      message: "Refertatore disattivato. I referti storici restano conservati.",
+    });
+  } catch (error) {
+    return handleError(res, error, "Errore interno nella disattivazione utente.");
   }
 }
 
@@ -110,6 +148,107 @@ export function listAdminArchiveController(req, res) {
     return res.json(listDrafts({ ...req.query, scope: "archive" }));
   } catch (error) {
     return handleError(res, error, "Errore interno nel caricamento archivio referti.");
+  }
+}
+
+export function deleteAdminDraftController(req, res) {
+  try {
+    const draft = getDraftById(req.params.id);
+    deleteDraft(req.params.id);
+    createAuditLog({
+      userId: req.authUser?.id,
+      role: req.authUser?.role,
+      action: AUDIT_ACTIONS.DRAFT_DELETED,
+      entityType: "draft",
+      entityId: req.params.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: {
+        scope: "admin_active",
+        tipo_referto: draft.tipo_referto,
+      },
+    });
+    return res.json({
+      ok: true,
+      message: "Referto in lavorazione eliminato correttamente.",
+    });
+  } catch (error) {
+    return handleError(res, error, "Errore interno nell'eliminazione del referto in lavorazione.");
+  }
+}
+
+export function deleteAdminArchiveDraftController(req, res) {
+  try {
+    const draft = hideDraftFromAdminArchive(req.params.id);
+    createAuditLog({
+      userId: req.authUser?.id,
+      role: req.authUser?.role,
+      action: AUDIT_ACTIONS.DRAFT_DELETED,
+      entityType: "draft",
+      entityId: draft.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: {
+        scope: "admin_archive",
+        softHidden: true,
+        tipo_referto: draft.tipo_referto,
+      },
+    });
+    return res.json({
+      ok: true,
+      draft,
+      message: "Referto archiviato rimosso dalla lista admin.",
+    });
+  } catch (error) {
+    return handleError(res, error, "Errore interno nella rimozione del referto archiviato.");
+  }
+}
+
+export async function saveAdminArchiveDraftToDriveController(req, res) {
+  try {
+    const draft = getDraftById(req.params.id);
+    const result = await archiveExistingSignedDraftPdfToDrive(req.params.id);
+    createAuditLog({
+      userId: req.authUser?.id,
+      role: req.authUser?.role,
+      action: AUDIT_ACTIONS.SIGNED_PDF_UPLOADED,
+      entityType: "draft",
+      entityId: req.params.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: {
+        scope: "admin_archive_drive",
+        tipo_referto: draft.tipo_referto,
+        alreadySaved: result.alreadySaved === true,
+      },
+    });
+    if (result.notification) {
+      createAuditLog({
+        userId: req.authUser?.id,
+        role: req.authUser?.role,
+        action: result.notification.sent
+          ? AUDIT_ACTIONS.SIGNED_PDF_NOTIFICATION_SENT
+          : AUDIT_ACTIONS.EMAIL_SEND_FAILED,
+        entityType: "draft",
+        entityId: req.params.id,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+        metadata: {
+          target: "humancare_notification",
+          reason: result.notification.reason || null,
+        },
+      });
+    }
+    return res.json({
+      ok: true,
+      message:
+        result.alreadySaved === true
+          ? "Il referto risulta gia archiviato su Drive."
+          : "Referto archiviato su Drive correttamente.",
+      ...result,
+    });
+  } catch (error) {
+    return handleError(res, error, "Errore interno durante l'archiviazione su Drive.");
   }
 }
 

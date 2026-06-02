@@ -12,7 +12,7 @@ function parseCookies(req) {
   }, {});
 }
 
-export function requireNeurologistAuth(req, res, next) {
+export function requireRefertatoreAuth(req, res, next) {
   const cookies = parseCookies(req);
   const sessionValue = cookies[env.authSessionCookieName];
   const sessionUser = getSessionUser(sessionValue);
@@ -36,7 +36,7 @@ export function requireDraftReadAccess(req, res, next) {
     return next();
   }
 
-  return requireNeurologistAuth(req, res, () => {
+  return requireRefertatoreAuth(req, res, () => {
     if (!req.params?.id) {
       return next();
     }

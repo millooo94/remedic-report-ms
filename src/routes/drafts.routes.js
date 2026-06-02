@@ -19,7 +19,7 @@ import { requireApiKey } from "../middleware/require-api-key.js";
 import {
   requireDraftReadAccess,
   requireDraftWriteAccess,
-} from "../middleware/require-neurologist-auth.js";
+} from "../middleware/require-refertatore-auth.js";
 import {
   validateCreateDraftRequest,
   validateDraftStatusRequest,

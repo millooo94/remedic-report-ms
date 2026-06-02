@@ -1,5 +1,6 @@
 import {
   createProfessional,
+  deleteProfessional,
   getProfessionalById,
   listProfessionals,
   updateProfessional,
@@ -16,14 +17,21 @@ function handleError(res, error, fallbackMessage) {
     console.error("Professionals error:", error?.message || error);
   }
 
-  return res.status(status).json({ error: message });
+  return res.status(status).json({
+    error: message,
+    message,
+    ...(error?.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+  });
 }
 
 export function listOperationalProfessionalsController(req, res) {
   try {
     const items = listProfessionals({
-      activeOnly: true,
-      visibleInStandardOnly: true,
+      activeOnly: req.query?.active === "0" ? false : true,
+      visibleInStandardOnly:
+        req.query?.visible_in_standard === "1" ||
+        req.query?.visibleInStandard === "1",
+      q: req.query?.q || "",
     });
     return res.json({ items });
   } catch (error) {
@@ -46,7 +54,12 @@ export function listOperationalRefertatoriController(req, res) {
 export function listAdminProfessionalsController(req, res) {
   try {
     return res.json({
-      items: listProfessionals({ activeOnly: false, visibleInStandardOnly: false }),
+      items: listProfessionals({
+        activeOnly:
+          req.query?.active === undefined ? true : req.query?.active !== "0",
+        visibleInStandardOnly: false,
+        q: req.query?.q || "",
+      }),
     });
   } catch (error) {
     return handleError(res, error, "Errore interno nel caricamento professionisti.");
@@ -103,7 +116,7 @@ export function updateProfessionalStatusController(req, res) {
     createAuditLog({
       userId: req.authUser?.id,
       role: req.authUser?.role,
-      action: AUDIT_ACTIONS.PROFESSIONAL_UPDATED,
+      action: professional.active ? AUDIT_ACTIONS.PROFESSIONAL_UPDATED : AUDIT_ACTIONS.PROFESSIONAL_DISABLED,
       entityType: "professional",
       entityId: professional.id,
       ipAddress: req.ip,
@@ -115,5 +128,30 @@ export function updateProfessionalStatusController(req, res) {
     return res.json(professional);
   } catch (error) {
     return handleError(res, error, "Errore interno nell'aggiornamento stato professionista.");
+  }
+}
+
+export function deleteProfessionalController(req, res) {
+  try {
+    const professional = deleteProfessional(req.params.id);
+    createAuditLog({
+      userId: req.authUser?.id,
+      role: req.authUser?.role,
+      action: AUDIT_ACTIONS.PROFESSIONAL_DISABLED,
+      entityType: "professional",
+      entityId: professional.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      metadata: {
+        active: professional.active,
+      },
+    });
+    return res.json({
+      ok: true,
+      professional,
+      message: "Professionista disattivato. I referti storici restano conservati.",
+    });
+  } catch (error) {
+    return handleError(res, error, "Errore interno nella disattivazione professionista.");
   }
 }
