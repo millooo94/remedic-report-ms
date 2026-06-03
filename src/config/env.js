@@ -46,6 +46,14 @@ export const env = {
   authCookieSameSite,
   authCookieSecure,
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 8),
+  authLoginRateLimit: Number(process.env.AUTH_LOGIN_RATE_LIMIT || 20),
+  authLoginRateWindowMs: Number(
+    process.env.AUTH_LOGIN_RATE_WINDOW_MS || 15 * 60 * 1000,
+  ),
+  authTwoFactorRateLimit: Number(process.env.AUTH_2FA_RATE_LIMIT || 20),
+  authTwoFactorRateWindowMs: Number(
+    process.env.AUTH_2FA_RATE_WINDOW_MS || 10 * 60 * 1000,
+  ),
   googleClientId: process.env.GOOGLE_CLIENT_ID || "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
   googleRefreshToken: process.env.GOOGLE_REFRESH_TOKEN || "",

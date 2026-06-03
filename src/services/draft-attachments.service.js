@@ -5,6 +5,7 @@ import {
   ALLOWED_ATTACHMENT_KINDS,
   EMG_ATTACHMENT_KINDS,
   PSG_ATTACHMENT_KINDS,
+  STANDARD_ATTACHMENT_KINDS,
 } from "../constants/drafts.js";
 import { env } from "../config/env.js";
 import { getDb, resolveUploadsRoot } from "../db/mysql.js";
@@ -12,6 +13,12 @@ import { uploadSignedPdfToDrive } from "./pdf.service.js";
 import { sendSignedPdfNotificationEmail } from "./email.service.js";
 
 const TRACE_ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
+const STANDARD_ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "image/png",
   "image/jpeg",
@@ -25,7 +32,9 @@ const SIGNATURE_ALLOWED_MIME_TYPES = new Set([
 const SIGNED_PDF_ALLOWED_MIME_TYPES = new Set(["application/pdf"]);
 const PSG_REPORT_ALLOWED_MIME_TYPES = new Set(["application/pdf"]);
 const MAX_TRACE_FILES = 10;
+const MAX_STANDARD_FILES = 8;
 const MAX_TRACE_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_STANDARD_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_SIGNATURE_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_SIGNED_PDF_BYTES = 30 * 1024 * 1024;
 const MAX_PSG_REPORT_BYTES = 30 * 1024 * 1024;
@@ -199,15 +208,39 @@ export async function saveSignedDraftPdfAndUpload(draftId, payload) {
     base64: payload.base64,
   });
   const updatedDraft = setDraftStatus(draftId, "firmato_caricato");
+  let notification = {
+    sent: false,
+    reason: "smtp_not_configured_or_failed",
+    error: null,
+  };
+
+  try {
+    notification = await sendSignedPdfNotificationEmail({
+      reportType: draft.tipo_referto,
+      patientName:
+        draft.paziente_nome_completo ||
+        `${draft.paziente_nome || ""} ${draft.paziente_cognome || ""}`.trim(),
+      refertatoreName:
+        draft.assigned_refertatore_name || draft.medico_refertatore || null,
+      driveLink: null,
+      completedAt:
+        updatedDraft?.completed_at ||
+        updatedDraft?.updated_at ||
+        new Date().toISOString(),
+    });
+  } catch (error) {
+    notification = {
+      sent: false,
+      reason: "email_send_failed",
+      error: error?.message || "email_send_failed",
+    };
+  }
 
   return {
     draft: updatedDraft,
     attachment: getAttachmentMetadataById(draftId, attachment.id),
     drive: null,
-    notification: {
-      sent: false,
-      reason: "admin_drive_archive_required",
-    },
+    notification,
   };
 }
 
@@ -249,22 +282,15 @@ export async function archiveExistingSignedDraftPdfToDrive(draftId) {
   const driveContext = buildDriveContextFromDraft(draft);
   const driveInfo = await uploadSignedPdfToDrive(driveContext, buffer);
   persistAttachmentDriveMetadata(draftId, attachment.id, driveInfo);
-  const notification = await sendSignedPdfNotificationEmail({
-    reportType: draft.tipo_referto,
-    patientName:
-      draft.paziente_nome_completo ||
-      `${draft.paziente_nome || ""} ${draft.paziente_cognome || ""}`.trim(),
-    refertatoreName:
-      draft.assigned_refertatore_name || draft.medico_refertatore || null,
-    driveLink: driveInfo?.driveWebViewLink || null,
-  });
-
   return {
     draft: setDraftStatus(draftId, "completato"),
     attachment: getAttachmentMetadataById(draftId, attachment.id),
     drive: driveInfo,
     alreadySaved: false,
-    notification,
+    notification: {
+      sent: false,
+      reason: "drive_archive_completed",
+    },
   };
 }
 
@@ -571,6 +597,15 @@ function normalizeIncomingAttachment(payload) {
 
 function getAttachmentConfig(kind) {
   switch (kind) {
+    case STANDARD_ATTACHMENT_KINDS.FILE:
+      return {
+        reportType: "standard",
+        allowedMimeTypes: STANDARD_ALLOWED_MIME_TYPES,
+        maxBytes: MAX_STANDARD_FILE_BYTES,
+        subdirectory: "allegati",
+        maxCount: MAX_STANDARD_FILES,
+        replaceExisting: false,
+      };
     case EMG_ATTACHMENT_KINDS.SIGNATURE:
       return {
         reportType: "emg",

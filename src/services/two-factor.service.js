@@ -3,8 +3,12 @@ import { authenticator } from "otplib";
 import QRCode from "qrcode";
 import { env } from "../config/env.js";
 import { getDb } from "../db/mysql.js";
+import { parseMysqlDateTimeUtc } from "../utils/mysql-datetime.js";
 import { generateOpaqueToken, hashOpaqueToken } from "./password.service.js";
-import { getUserById } from "./users.service.js";
+import {
+  getUserById,
+  getUserTwoFactorSecretEncryptedById,
+} from "./users.service.js";
 
 const CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const RECOVERY_CODE_COUNT = 10;
@@ -95,7 +99,8 @@ export function completeTwoFactorSetup(challengeToken, code) {
 export function verifyTwoFactorChallenge(challengeToken, code) {
   const challenge = getValidChallenge(challengeToken, "login_2fa");
   const user = getUserById(challenge.user_id);
-  const secret = decryptSecret(user.two_factor_secret_encrypted);
+  const secretEncrypted = getUserTwoFactorSecretEncryptedById(user.id);
+  const secret = decryptSecret(secretEncrypted);
 
   if (!authenticator.check(normalizeOtp(code), secret)) {
     throw createHttpError(400, "Codice di autenticazione non valido.", {
@@ -213,7 +218,7 @@ function getValidChallenge(challengeToken, purpose) {
     )
     .get(tokenHash, purpose);
 
-  if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+  if (!row || parseMysqlDateTimeUtc(row.expires_at).getTime() <= Date.now()) {
     throw createHttpError(400, "Verifica a due fattori non valida o scaduta.");
   }
 

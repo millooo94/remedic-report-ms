@@ -9,6 +9,13 @@ import { normalizeDoctorName, normalizeName } from "../utils/strings.js";
 import { getPage, releasePage } from "./browser-pool.service.js";
 import { findOrCreateFolder, uploadOrReplaceFile } from "./drive.service.js";
 
+const MERGEABLE_ATTACHMENT_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+]);
+
 export async function generatePdfPrintPage(payload) {
   const { buffer, fileName, context } = await generatePdfDocument(payload);
   let drive = null;
@@ -63,7 +70,7 @@ async function generatePdfDocument(payload) {
       },
     });
 
-    const buffer = await mergePdfAttachments(pdf, payload.attachments?.pdfs ?? []);
+    const buffer = await mergeDocumentAttachments(pdf, payload.attachments);
 
     return {
       buffer,
@@ -194,47 +201,213 @@ export async function uploadReportPdfToDrive(
   }
 }
 
-async function mergePdfAttachments(mainPdfBuffer, pdfAttachments) {
-  if (!Array.isArray(pdfAttachments) || pdfAttachments.length === 0) {
+async function mergeDocumentAttachments(mainPdfBuffer, attachments) {
+  const normalizedAttachments = normalizeMergeAttachments(attachments);
+
+  if (normalizedAttachments.length === 0) {
     return mainPdfBuffer;
   }
 
   const mergedDocument = await PDFDocument.load(mainPdfBuffer);
 
-  for (const attachment of pdfAttachments) {
-    if (attachment?.mimeType !== "application/pdf") {
+  for (const attachment of normalizedAttachments) {
+    if (attachment?.mimeType === "application/pdf") {
+      await appendPdfAttachment(mergedDocument, attachment);
       continue;
     }
 
-    let attachmentBuffer;
-
-    try {
-      attachmentBuffer = Buffer.from(attachment.base64, "base64");
-    } catch {
-      throw createPdfAttachmentError(
-        attachment?.fileName,
-        "Base64 PDF attachment is not valid.",
-      );
+    if (MERGEABLE_ATTACHMENT_IMAGE_TYPES.has(attachment?.mimeType)) {
+      await appendImageAttachment(mergedDocument, attachment);
+      continue;
     }
 
-    try {
-      const attachmentDocument = await PDFDocument.load(attachmentBuffer);
-      const pages = await mergedDocument.copyPages(
-        attachmentDocument,
-        attachmentDocument.getPageIndices(),
-      );
-
-      pages.forEach((page) => mergedDocument.addPage(page));
-    } catch {
-      throw createPdfAttachmentError(
-        attachment?.fileName,
-        "Unable to read attached PDF. The file may be corrupted.",
-      );
-    }
+    throw createPdfAttachmentError(
+      attachment?.fileName,
+      "Attachment type is not supported for final PDF merge.",
+    );
   }
 
   const mergedPdfBytes = await mergedDocument.save();
   return Buffer.from(mergedPdfBytes);
+}
+
+function normalizeMergeAttachments(attachments) {
+  if (!attachments || typeof attachments !== "object") {
+    return [];
+  }
+
+  if (Array.isArray(attachments.files) && attachments.files.length > 0) {
+    return attachments.files;
+  }
+
+  if (Array.isArray(attachments.pdfs) && attachments.pdfs.length > 0) {
+    return attachments.pdfs;
+  }
+
+  return [];
+}
+
+async function appendPdfAttachment(mergedDocument, attachment) {
+  const attachmentBuffer = decodeAttachmentBase64(
+    attachment,
+    "PDF attachment content is not valid.",
+  );
+
+  try {
+    const attachmentDocument = await PDFDocument.load(attachmentBuffer);
+    const pages = await mergedDocument.copyPages(
+      attachmentDocument,
+      attachmentDocument.getPageIndices(),
+    );
+
+    pages.forEach((page) => mergedDocument.addPage(page));
+  } catch {
+    throw createPdfAttachmentError(
+      attachment?.fileName,
+      "Unable to read attached PDF. The file may be corrupted.",
+    );
+  }
+}
+
+async function appendImageAttachment(mergedDocument, attachment) {
+  const attachmentBuffer = decodeAttachmentBase64(
+    attachment,
+    "Image attachment content is not valid.",
+  );
+
+  let imagePdfBuffer;
+
+  try {
+    imagePdfBuffer = await renderImageAttachmentPdfBuffer(
+      attachment,
+      attachmentBuffer,
+    );
+  } catch {
+    throw createPdfAttachmentError(
+      attachment?.fileName,
+      "Unable to prepare attached image for the final PDF.",
+    );
+  }
+
+  try {
+    const imagePdfDocument = await PDFDocument.load(imagePdfBuffer);
+    const pages = await mergedDocument.copyPages(
+      imagePdfDocument,
+      imagePdfDocument.getPageIndices(),
+    );
+    pages.forEach((page) => mergedDocument.addPage(page));
+  } catch {
+    throw createPdfAttachmentError(
+      attachment?.fileName,
+      "Unable to merge attached image into the final PDF.",
+    );
+  }
+}
+
+function decodeAttachmentBase64(attachment, invalidMessage) {
+  try {
+    const buffer = Buffer.from(String(attachment?.base64 || ""), "base64");
+    if (!buffer.length) {
+      throw new Error("empty");
+    }
+    return buffer;
+  } catch {
+    throw createPdfAttachmentError(attachment?.fileName, invalidMessage);
+  }
+}
+
+async function renderImageAttachmentPdfBuffer(attachment, buffer) {
+  let page;
+
+  try {
+    page = await getPage();
+
+    const dataUrl = `data:${attachment.mimeType};base64,${buffer.toString("base64")}`;
+    await page.setContent(
+      `
+        <!DOCTYPE html>
+        <html lang="it">
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              @page {
+                size: A4;
+                margin: 18mm 14mm 16mm;
+              }
+
+              html, body {
+                margin: 0;
+                padding: 0;
+                font-family: Arial, Helvetica, sans-serif;
+                color: #16313a;
+              }
+
+              .attachment-sheet {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+              }
+
+              .attachment-title {
+                font-size: 14px;
+                font-weight: 700;
+                color: #1c3d47;
+                word-break: break-word;
+              }
+
+              .attachment-image-wrap {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 240mm;
+                border: 1px solid rgba(22, 49, 58, 0.12);
+                border-radius: 12px;
+                overflow: hidden;
+                background: #ffffff;
+              }
+
+              .attachment-image {
+                max-width: 100%;
+                max-height: 238mm;
+                object-fit: contain;
+                display: block;
+              }
+            </style>
+          </head>
+          <body>
+            <main class="attachment-sheet">
+              <div class="attachment-title">${escapeHtml(attachment.fileName || "Allegato")}</div>
+              <div class="attachment-image-wrap">
+                <img class="attachment-image" src="${dataUrl}" alt="${escapeHtml(
+                  attachment.fileName || "Allegato",
+                )}" />
+              </div>
+            </main>
+          </body>
+        </html>
+      `,
+      {
+        waitUntil: "domcontentloaded",
+        timeout: 0,
+      },
+    );
+
+    return await page.pdf({
+      printBackground: true,
+      preferCSSPageSize: true,
+      displayHeaderFooter: false,
+      margin: {
+        top: "0mm",
+        bottom: "0mm",
+        left: "0mm",
+        right: "0mm",
+      },
+    });
+  } finally {
+    if (page) {
+      releasePage(page);
+    }
+  }
 }
 
 function createPdfAttachmentError(fileName, message) {
@@ -243,4 +416,13 @@ function createPdfAttachmentError(fileName, message) {
   );
   err.statusCode = 400;
   return err;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }

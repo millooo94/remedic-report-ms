@@ -290,7 +290,13 @@ export function listDrafts(filters = {}) {
   }
 
   if (scope === "active") {
-    clauses.push("stato NOT IN ('completato', 'firmato_caricato')");
+    if (filters.tipo_referto === "emg" || filters.tipo_referto === "psg") {
+      clauses.push(
+        "stato IN ('bozza', 'anamnesi_raccolta', 'in_refertazione')",
+      );
+    } else {
+      clauses.push("stato NOT IN ('completato', 'firmato_caricato')");
+    }
   } else if (scope === "archive") {
     clauses.push("stato IN ('completato', 'firmato_caricato')");
     if (filters.include_hidden_admin !== "1") {

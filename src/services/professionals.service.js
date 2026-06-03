@@ -21,21 +21,21 @@ export function listProfessionals({
   const params = {};
 
   if (activeOnly) {
-    clauses.push("active = 1");
+    clauses.push("p.active = 1");
   }
 
   if (visibleInStandardOnly) {
-    clauses.push("visible_in_standard = 1");
+    clauses.push("p.visible_in_standard = 1");
   }
 
   if (String(q || "").trim()) {
     clauses.push(`
       (
-        LOWER(COALESCE(first_name, '')) LIKE @query OR
-        LOWER(COALESCE(last_name, '')) LIKE @query OR
-        LOWER(display_name) LIKE @query OR
-        LOWER(COALESCE(specializzazione, '')) LIKE @query OR
-        LOWER(COALESCE(email, '')) LIKE @query
+        LOWER(COALESCE(p.first_name, '')) LIKE @query OR
+        LOWER(COALESCE(p.last_name, '')) LIKE @query OR
+        LOWER(p.display_name) LIKE @query OR
+        LOWER(COALESCE(p.specializzazione, '')) LIKE @query OR
+        LOWER(COALESCE(p.email, '')) LIKE @query
       )
     `);
     params.query = `%${String(q).trim().toLowerCase()}%`;
@@ -218,6 +218,9 @@ function normalizeProfessionalPayload(payload) {
     });
   }
 
+  const isTnfpSpecialization =
+    specializzazione === "Tecniche di Neurofisiopatologia";
+
   return {
     id: payload?.id || crypto.randomUUID(),
     first_name: firstName,
@@ -226,10 +229,11 @@ function normalizeProfessionalPayload(payload) {
     email,
     specializzazione,
     role_label: normalizeNullableString(payload?.role_label || payload?.roleLabel),
-    visible_in_standard:
-      payload?.visible_in_standard === false ||
-      payload?.visible_in_standard === 0 ||
-      payload?.visible_in_standard === "0"
+    visible_in_standard: isTnfpSpecialization
+      ? 0
+      : payload?.visible_in_standard === false ||
+          payload?.visible_in_standard === 0 ||
+          payload?.visible_in_standard === "0"
         ? 0
         : 1,
     is_refertatore:

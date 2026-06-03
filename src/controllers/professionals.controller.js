@@ -169,7 +169,7 @@ function syncProfessionalReservedAreaIfRequested(professional, payload, isCreate
   }
 
   return upsertProfessionalReservedUser(professional.id, {
-    email: payload?.reserved_email ?? professional.email,
+    email: professional.email,
     password: String(payload?.reserved_password || ""),
     active: professional.active,
     mustChangePassword: isCreate || !!String(payload?.reserved_password || "").trim(),

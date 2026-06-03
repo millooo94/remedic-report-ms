@@ -4,6 +4,15 @@ function isNonEmptyString(value) {
 
 const MAX_ATTACHMENT_PDFS = 10;
 const MAX_ATTACHMENT_PDF_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_FILES = 15;
+const MAX_ATTACHMENT_FILE_SIZE_BYTES = 12 * 1024 * 1024;
+const SUPPORTED_FINAL_ATTACHMENT_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+]);
 
 function isValidDateString(value) {
   if (!isNonEmptyString(value)) return false;
@@ -65,6 +74,50 @@ export function validatePdfRequest(req, res, next) {
   if (attachments !== undefined) {
     if (typeof attachments !== "object" || attachments === null) {
       errors.push("attachments must be an object");
+    } else if (
+      attachments.files !== undefined &&
+      !Array.isArray(attachments.files)
+    ) {
+      errors.push("attachments.files must be an array");
+    } else if (Array.isArray(attachments.files)) {
+      if (attachments.files.length > MAX_ATTACHMENT_FILES) {
+        errors.push(
+          `attachments.files must contain at most ${MAX_ATTACHMENT_FILES} files`,
+        );
+      }
+
+      attachments.files.forEach((file, index) => {
+        const fileLabel = isNonEmptyString(file?.fileName)
+          ? file.fileName.trim()
+          : `attachments.files[${index}]`;
+
+        if (!isNonEmptyString(file?.fileName)) {
+          errors.push(`${fileLabel}: fileName is required`);
+        }
+
+        if (!SUPPORTED_FINAL_ATTACHMENT_TYPES.has(file?.mimeType)) {
+          errors.push(
+            `${fileLabel}: mimeType must be one of application/pdf, image/png, image/jpeg, image/jpg, image/webp`,
+          );
+        }
+
+        if (!isNonEmptyString(file?.base64)) {
+          errors.push(`${fileLabel}: base64 is required`);
+          return;
+        }
+
+        const sizeBytes = getBase64SizeBytes(file.base64);
+        if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+          errors.push(`${fileLabel}: base64 content is not a valid attachment payload`);
+          return;
+        }
+
+        if (sizeBytes > MAX_ATTACHMENT_FILE_SIZE_BYTES) {
+          errors.push(
+            `${fileLabel}: file exceeds max size of ${MAX_ATTACHMENT_FILE_SIZE_BYTES} bytes`,
+          );
+        }
+      });
     } else if (
       attachments.pdfs !== undefined &&
       !Array.isArray(attachments.pdfs)

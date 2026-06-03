@@ -6,6 +6,48 @@ let transporter;
 const REMEDIC_BLUE = "#1C9EBD";
 const REMEDIC_GREEN = "#AECA20";
 
+function formatItalianDate(value) {
+  if (!value) {
+    return "Non indicata";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Non indicata";
+  }
+
+  return date.toLocaleDateString("it-IT");
+}
+
+function formatItalianDateTime(value) {
+  if (!value) {
+    return "Non indicata";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Non indicata";
+  }
+
+  return date.toLocaleString("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function buildReservedLoginUrl() {
+  const baseUrl = String(env.appPublicUrl || "").trim();
+  if (!baseUrl) {
+    return "";
+  }
+
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${separator}view=reserved-login`;
+}
+
 export async function sendPasswordResetEmail({
   email,
   displayName,
@@ -67,15 +109,16 @@ export async function sendDraftAssignedEmail({
   const lines = [
     `Tipo referto: ${typeLabel}`,
     `Paziente: ${patientName || "Non indicato"}`,
-    `Data esame/registrazione: ${referenceDate || "Non indicata"}`,
+    `Data esame/registrazione: ${formatItalianDate(referenceDate)}`,
     "Accedi all'Area Riservata per completare la refertazione.",
   ];
+  const reservedLoginUrl = buildReservedLoginUrl() || env.appPublicUrl;
 
   const sent = await safeSendMail({
     from: env.smtpFrom,
     to: email,
     subject,
-    text: [greeting, "", intro, ...lines, "", `Accedi qui: ${env.appPublicUrl}`].join(
+    text: [greeting, "", intro, ...lines, "", `Accedi qui: ${reservedLoginUrl}`].join(
       "\n",
     ),
     html: buildBrandedEmailHtml({
@@ -85,7 +128,7 @@ export async function sendDraftAssignedEmail({
       greeting,
       lines,
       ctaLabel: "Accedi all'Area Riservata",
-      ctaUrl: env.appPublicUrl,
+      ctaUrl: reservedLoginUrl,
     }),
   });
 
@@ -97,6 +140,7 @@ export async function sendSignedPdfNotificationEmail({
   patientName,
   refertatoreName,
   driveLink,
+  completedAt,
 }) {
   if (!(await canSendEmail()) || !env.signedPdfNotificationEmail) {
     return { sent: false, reason: "smtp_or_notification_not_configured" };
@@ -105,14 +149,15 @@ export async function sendSignedPdfNotificationEmail({
   const typeLabel = reportType === "psg" ? "PSG" : "EMG";
   const subject = `Referto firmato caricato - ${typeLabel} - Remedic`;
   const intro =
-    "Il PDF firmato definitivo e stato caricato e salvato su Drive correttamente.";
+    "Il PDF firmato definitivo e stato acquisito correttamente ed e disponibile per la gestione amministrativa.";
   const lines = [
     `Tipo referto: ${typeLabel}`,
     `Paziente: ${patientName || "Non indicato"}`,
     `Refertatore: ${refertatoreName || "Non indicato"}`,
-    `Data: ${new Date().toLocaleString("it-IT")}`,
-    `Stato Drive: ${driveLink ? "Salvato con link disponibile" : "Salvato"}`,
+    `Data: ${formatItalianDate(completedAt || new Date().toISOString())}`,
+    `Stato Drive: ${driveLink ? "Salvato su Drive" : "In attesa di archiviazione amministrativa"}`,
   ];
+  const reservedLoginUrl = buildReservedLoginUrl() || env.appPublicUrl;
 
   const sent = await safeSendMail({
     from: env.smtpFrom,
@@ -123,15 +168,15 @@ export async function sendSignedPdfNotificationEmail({
       "",
       intro,
       ...lines,
-      driveLink ? `Link Drive: ${driveLink}` : "Link Drive: non disponibile",
+      driveLink ? `Link Drive: ${driveLink}` : `Accedi qui: ${reservedLoginUrl}`,
     ].join("\n"),
     html: buildBrandedEmailHtml({
       eyebrow: "Archivio definitivo",
       title: `PDF firmato ${typeLabel} caricato`,
       intro,
       lines,
-      ctaLabel: driveLink ? "Apri su Drive" : null,
-      ctaUrl: driveLink || null,
+      ctaLabel: driveLink ? "Apri archivio" : "Accedi all'Area Riservata",
+      ctaUrl: driveLink || reservedLoginUrl,
     }),
   });
 
@@ -205,6 +250,7 @@ export async function sendTwoFactorEnabledEmail({
       lines: [
         "Da questo momento per accedere all'Area Riservata sara richiesto anche il codice generato dalla tua app Authenticator.",
         "Se non riconosci questa operazione, contatta subito l'assistenza Remedic.",
+        `Data: ${formatItalianDateTime(new Date().toISOString())}`,
       ],
     }),
   });
@@ -238,6 +284,7 @@ export async function sendRecoveryCodeUsedEmail({
       intro,
       lines: [
         "Se non sei stato tu, cambia subito la password e contatta l'assistenza Remedic.",
+        `Data: ${formatItalianDateTime(new Date().toISOString())}`,
       ],
     }),
   });
@@ -271,6 +318,7 @@ export async function sendPasswordChangedSecurityEmail({
       intro,
       lines: [
         "Se non riconosci questa operazione, contatta subito l'assistenza Remedic.",
+        `Data: ${formatItalianDateTime(new Date().toISOString())}`,
       ],
     }),
   });

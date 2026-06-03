@@ -129,6 +129,18 @@ export function getUserPasswordHashById(id) {
   return row.password_hash;
 }
 
+export function getUserTwoFactorSecretEncryptedById(id) {
+  const row = getDb()
+    .prepare("SELECT two_factor_secret_encrypted FROM users WHERE id = ?")
+    .get(id);
+
+  if (!row) {
+    throw createHttpError(404, "Utente non trovato.");
+  }
+
+  return row.two_factor_secret_encrypted || null;
+}
+
 export function createUser(payload) {
   const requestedRole = String(payload?.role || "").trim();
   const requestedProfessionalId = normalizeNullableString(
@@ -665,6 +677,20 @@ function normalizeUserPayload(payload, requirePassword) {
             "Questo professionista non e compatibile con le aree EMG o PSG.",
         },
       );
+    }
+
+    if (role === "refertatore") {
+      const linkedReservedUser = getUserByProfessionalId(professional.id);
+      if (!linkedReservedUser || !linkedReservedUser.active) {
+        throw createHttpError(
+          400,
+          "Il professionista selezionato deve avere un'Area Riservata attiva prima di poter diventare refertatore asincrono.",
+          {
+            professional_id:
+              "Seleziona un professionista con Area Riservata attiva prima di assegnarlo come refertatore asincrono.",
+          },
+        );
+      }
     }
 
     if (role === "refertatore" && assignedTypes.length === 0) {

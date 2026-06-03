@@ -59,7 +59,7 @@ async function handleQuery(payload) {
 
 function normalizeQuery(sql, params) {
   if (Array.isArray(params)) {
-    return { sql, values: params };
+    return { sql, values: params.map(normalizeMysqlValue) };
   }
 
   if (!params || typeof params !== "object") {
@@ -68,7 +68,7 @@ function normalizeQuery(sql, params) {
 
   const values = [];
   const normalizedSql = String(sql).replace(/@([A-Za-z0-9_]+)/g, (_, key) => {
-    values.push(params[key]);
+    values.push(normalizeMysqlValue(params[key]));
     return "?";
   });
 
@@ -76,6 +76,35 @@ function normalizeQuery(sql, params) {
     sql: normalizedSql,
     values,
   };
+}
+
+function normalizeMysqlValue(value) {
+  if (value instanceof Date) {
+    return formatMysqlDateTime(value);
+  }
+
+  if (typeof value === "string") {
+    const isoDateTime = value.match(
+      /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?Z$/,
+    );
+
+    if (isoDateTime) {
+      return `${isoDateTime[1]} ${isoDateTime[2]}`;
+    }
+  }
+
+  return value;
+}
+
+function formatMysqlDateTime(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(date.getUTCSeconds()).padStart(2, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 function formatResult(mode, rows) {

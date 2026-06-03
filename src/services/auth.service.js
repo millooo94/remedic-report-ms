@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { getDb } from "../db/mysql.js";
+import { parseMysqlDateTimeUtc } from "../utils/mysql-datetime.js";
 import {
   changeUserPassword,
   getUserByEmail,
@@ -244,7 +245,7 @@ export function resetPasswordWithToken(token, newPassword) {
     )
     .get(tokenHash);
 
-  if (!row || new Date(row.expires_at).getTime() < Date.now()) {
+  if (!row || parseMysqlDateTimeUtc(row.expires_at).getTime() < Date.now()) {
     throw createHttpError(400, "Token di reset non valido o scaduto.");
   }
 
@@ -382,7 +383,7 @@ function parseAndVerifySessionCookie(sessionCookieValue) {
     return null;
   }
 
-  if (new Date(row.expires_at).getTime() <= Date.now()) {
+  if (parseMysqlDateTimeUtc(row.expires_at).getTime() <= Date.now()) {
     return null;
   }
 

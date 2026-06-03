@@ -32,7 +32,12 @@ export const PSG_ATTACHMENT_KINDS = {
   SIGNED_PDF: "psg_pdf_firmato",
 };
 
+export const STANDARD_ATTACHMENT_KINDS = {
+  FILE: "standard_allegato",
+};
+
 export const ALLOWED_ATTACHMENT_KINDS = [
+  ...Object.values(STANDARD_ATTACHMENT_KINDS),
   ...Object.values(EMG_ATTACHMENT_KINDS),
   ...Object.values(PSG_ATTACHMENT_KINDS),
 ];

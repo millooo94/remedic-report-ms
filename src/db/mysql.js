@@ -381,7 +381,6 @@ function initWorker() {
       password: env.mysqlPassword,
       connectionLimit: env.mysqlConnectionLimit,
     },
-    transferList: [channel.port2],
   });
   worker.postMessage({ type: "attachPort", port: channel.port2 }, [channel.port2]);
 }

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { env } from "../config/env.js";
 import {
   changePasswordController,
   csrfController,
@@ -34,8 +35,8 @@ const router = Router();
 
 const loginRateLimit = createRateLimitMiddleware({
   scope: "auth-login",
-  limit: 5,
-  windowMs: 15 * 60 * 1000,
+  limit: env.authLoginRateLimit,
+  windowMs: env.authLoginRateWindowMs,
   deriveExtraKey: (req) => String(req.body?.email || "").trim().toLowerCase(),
 });
 
@@ -55,8 +56,8 @@ const resetRateLimit = createRateLimitMiddleware({
 
 const twoFactorRateLimit = createRateLimitMiddleware({
   scope: "auth-two-factor",
-  limit: 8,
-  windowMs: 10 * 60 * 1000,
+  limit: env.authTwoFactorRateLimit,
+  windowMs: env.authTwoFactorRateWindowMs,
   deriveExtraKey: (req) =>
     String(req.body?.challengeToken || "").slice(0, 24) ||
     String(req.body?.email || "").trim().toLowerCase(),
